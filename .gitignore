@@ -1,0 +1,5 @@
+build/
+.DS_Store
+
+# Local review notes
+OPTIMIZATION-REVIEW.md

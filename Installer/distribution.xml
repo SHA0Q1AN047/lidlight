@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>TITLE</title>
+    <organization>com.lidlight</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="12.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="background.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+    <choice id="default" title="TITLE">
+        <pkg-ref id="com.lidlight.pkg"/>
+    </choice>
+    <pkg-ref id="com.lidlight.pkg" version="@VERSION@" onConclusion="none">Lidlight-component.pkg</pkg-ref>
+</installer-gui-script>

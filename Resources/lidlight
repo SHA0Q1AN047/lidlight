@@ -1,0 +1,83 @@
+#!/bin/sh
+# Lidlight命令行 / Lidlight command line
+#   lidlight            查看状态 / show status
+#   lidlight auto|on|off  切换模式 / switch mode
+#   lidlight log [N]    最近 N 行日志 / last N log lines
+#   lidlight check      体检并输出诊断信息 / health check and diagnostics
+#   lidlight screen-on  开盖后屏幕仍是黑的时，把背光打开 / turn the backlight back on
+# 快捷指令里用「运行 Shell 脚本」调用即可。In Shortcuts, call it from "Run Shell Script".
+
+PREFIX=${LIDLIGHT_PREFIX:-com.lidlight}
+APP=/Applications/Lidlight.app
+LOG=/var/log/lidlight.log
+
+status() {
+    mode=$(/usr/bin/notifyutil -g "$PREFIX.state" 2>/dev/null | awk '{print $2}')
+    case "$mode" in
+        1) mode="始终开启 always on" ;;
+        2) mode="始终关闭 always off" ;;
+        0) mode="自动 automatic" ;;
+        *) mode="未知 unknown" ;;
+    esac
+    if /usr/bin/pgrep -x lidlightd >/dev/null; then daemon="运行中 running"; else daemon="未运行 not running"; mode="-"; fi
+    awake="未知 unknown"
+    if sleep_info=$(/usr/bin/pmset -g); then
+        if printf '%s\n' "$sleep_info" | grep -q "SleepDisabled[[:space:]]*1"; then
+            awake="开启 on（合盖继续运行 stays awake with the lid closed）"
+        elif printf '%s\n' "$sleep_info" | grep -q "SleepDisabled[[:space:]]*0"; then
+            awake="关闭 off（正常睡眠 sleeps normally）"
+        fi
+    fi
+    power_info=$(/usr/bin/pmset -g ps)
+    power=$(printf '%s\n' "$power_info" | head -n 1 | sed "s/.*'\(.*\)'.*/\1/")
+    battery=$(printf '%s\n' "$power_info" | grep -o '[0-9]*%' | head -n 1)
+    version=$(/usr/bin/defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null)
+    echo "Lidlight Mode:   $awake"
+    echo "设定 Setting:         $mode"
+    echo "供电 Power:           $power ${battery}"
+    echo "后台服务 Service:     $daemon"
+    echo "版本 Version:         ${version:-?}"
+}
+
+case "${1:-status}" in
+    status) status ;;
+    auto|on|off)
+        if ! /usr/bin/pgrep -x lidlightd >/dev/null; then
+            echo "后台服务未运行，无法切换 / The background service is not running" >&2
+            exit 1
+        fi
+        case "$1" in auto) expected=0 ;; on) expected=1 ;; off) expected=2 ;; esac
+        if ! /usr/bin/notifyutil -p "$PREFIX.set-$1"; then
+            echo "无法发送模式请求 / Could not send the mode request" >&2
+            exit 1
+        fi
+        # 等待服务发布选定模式；这不代表系统电源设置已成功应用。
+        attempts=0
+        while [ "$attempts" -lt 25 ]; do
+            actual=$(/usr/bin/notifyutil -g "$PREFIX.state" 2>/dev/null | awk '{print $2}')
+            if [ "$actual" = "$expected" ]; then
+                status
+                exit 0
+            fi
+            sleep 0.2
+            attempts=$((attempts + 1))
+        done
+        echo "等待模式确认超时 / Timed out waiting for mode confirmation" >&2
+        status
+        exit 1
+        ;;
+    log) /usr/bin/tail -n "${2:-30}" "$LOG" ;;
+    check) "$APP/Contents/MacOS/Lidlight" --print-diagnostics ;;
+    screen-on)
+        if "$APP/Contents/MacOS/Lidlight" --screen-on; then
+            echo "屏幕背光已打开 / Backlight is on"
+        else
+            echo "没能打开背光，请按键盘上的亮度增加键（F2）/ Could not set the backlight; press the brightness-up key (F2)" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "用法 Usage: lidlight [status|auto|on|off|log [N]|check|screen-on]" >&2
+        exit 2
+        ;;
+esac

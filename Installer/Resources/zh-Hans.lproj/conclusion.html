@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<!-- 同 welcome.html：只用富文本能表达的样式，正文颜色跟随系统外观。 -->
+<style>
+    body {
+        margin: 0;
+        font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
+    }
+    h1 {
+        margin: 0 0 4px;
+        font-size: 22px;
+        font-weight: 700;
+    }
+    h1 span {
+        color: #2fb463;
+    }
+    p {
+        margin: 0 0 9px;
+    }
+    .lead {
+        margin-bottom: 12px;
+    }
+    code {
+        font: 11px Menlo, monospace;
+        color: #4a7dff;
+    }
+</style>
+</head>
+<body>
+    <h1><span>✓</span> 已经在运行了</h1>
+    <p class="lead">菜单栏多了一个图标，后台服务已启动，不需要重启电脑。</p>
+
+    <p><b>一個面板，三種模式。</b><br>
+    點選太陽或月亮圖示開啟 Lidlight。選擇 Automatic、Stay awake 或 Allow sleep；Details 與複製診斷資訊也在同一面板。</p>
+
+    <p><b>想卸载时</b><br>
+    在终端运行下面这行，睡眠设置会一并恢复：<br>
+    <code>sudo /Applications/Lidlight.app/Contents/Resources/uninstall.sh</code></p>
+</body>
+</html>
