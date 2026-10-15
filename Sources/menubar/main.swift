@@ -3,6 +3,7 @@ import SwiftUI
 import IOKit
 import IOKit.ps
 import notify
+import UserNotifications
 
 let notifyPrefix = "com.lidlight"
 
@@ -44,8 +45,9 @@ func daemonRunning() -> Bool {
     return task.terminationStatus == 0
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let dashboard = DashboardState()
+    let features = Features()
     let popover = NSPopover()
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let lidScreen = LidScreen()
@@ -60,16 +62,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestStop: { notify_post("\(notifyPrefix).set-off") },
         hasStopped: { QuitPolicy.isStopped(prefix: notifyPrefix) })
 
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 380, height: 540)
+        popover.contentSize = NSSize(width: 380, height: 600)
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: Dashboard(
-            state: dashboard,
+            state: dashboard, features: features,
             select: { [weak self] index in
-                let names = ["auto", "on", "off"]
-                guard names.indices.contains(index) else { return }
-                notify_post("\(notifyPrefix).set-\(names[index])")
+                self?.features.select(index)
                 self?.refreshSoon()
             },
             toggleDim: { [weak self] in
@@ -93,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             quit: { [weak self] in
+                self?.features.prepareQuit()
                 self?.userRequestedQuit = true
                 NSApp.terminate(nil)
             }))
@@ -106,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, context)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; self.refresh() }
         lidTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let modeOn = rootDomainFlag("SleepDisabled"),
                   let lidClosed = rootDomainFlag("AppleClamshellState") else { return }
@@ -119,6 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
         termSource.resume()
+        features.actualAwake = { rootDomainFlag("SleepDisabled") }
+        features.lidClosed = { rootDomainFlag("AppleClamshellState") }
+        features.restoreScreen = { [weak self] in self?.lidScreen.forceOn() ?? false }
+        features.didChange = { [weak self] in self?.refresh() }
+        features.start()
         refresh()
         if CommandLine.arguments.contains("--health-check") { toggleDashboard(); dashboard.details = true }
     }
@@ -137,16 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.refreshPending = false
+            if self?.userRequestedQuit == false { self?.features.tick() }
             self?.refresh()
         }
     }
 
     func refresh() {
         let enabled = rootDomainFlag("SleepDisabled")
-        let symbol = enabled.map { $0 ? "sun.max.fill" : "moon" } ?? "exclamationmark.triangle"
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Lidlight")
-        statusItem.button?.image?.isTemplate = true
-        statusItem.button?.toolTip = "Lidlight · " + (enabled.map { $0 ? "Awake" : "Sleep allowed" } ?? "Unknown")
+        statusItem.button?.image = features.low ? MenuBarIcon.lowBattery : MenuBarIcon.image(awake: enabled)
+        statusItem.button?.title = features.preferences.countdown ? features.countdownText : ""
+        statusItem.button?.toolTip = "Lidlight · " + features.reason + (features.countdownText.isEmpty ? "" : " · " + features.countdownText)
         // Hidden panels do not need process scans or power-source snapshots.
         guard popover.isShown, !refreshing else { return }
         refreshing = true

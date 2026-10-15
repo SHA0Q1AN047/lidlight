@@ -12,6 +12,13 @@ import notify
 let dryRun = CommandLine.arguments.contains("--dry-run")
 let notifyPrefix = dryRun ? "com.lidlight.dryrun" : "com.lidlight"
 let modeFile = "/var/db/lidlight"
+let optionsFile = "/var/db/lidlight-options.json"
+var options = (!dryRun ? (try? Data(contentsOf: URL(fileURLWithPath: optionsFile))).flatMap { try? JSONDecoder().decode(DaemonOptions.self, from: $0) } : nil) ?? DaemonOptions()
+func saveOptions() {
+    guard !dryRun else { return }
+    do { try JSONEncoder().encode(options).write(to: URL(fileURLWithPath: optionsFile), options: .atomic) }
+    catch { log("Could not save options: \(error.localizedDescription)") }
+}
 setvbuf(stdout, nil, _IOLBF, 0)
 
 func argValue(_ name: String) -> String? {
@@ -56,6 +63,8 @@ enum State {
     nonisolated(unsafe) static var burst = 0
     nonisolated(unsafe) static var overridesToken: Int32 = 0
     nonisolated(unsafe) static var lowBattery = false
+    nonisolated(unsafe) static var displayAssertion: IOPMAssertionID = 0
+    nonisolated(unsafe) static var sessionStartedOnAC = false
 }
 
 func log(_ message: String) {
@@ -129,33 +138,22 @@ func pmset(_ args: [String]) -> Bool {
 // 「始终开启」时用电池硬撑，电量降到 10% 就放行睡眠，免得直接断电。回到 15% 以上或接上电源后恢复。
 func updateLowBattery() {
     let was = State.lowBattery
-    if State.mode == .on, !onACPower(), let percent = batteryPercent() {
-        if percent <= 10 {
-            State.lowBattery = true
-        } else if percent >= 15 {
-            State.lowBattery = false
-        }
-    } else {
-        State.lowBattery = false
-    }
+    State.lowBattery = State.mode == .on && PowerPolicy.lowBattery(previous: State.lowBattery, percent: batteryPercent(), onAC: onACPower(), threshold: options.batteryLimit)
     // 是切换模式导致的解除就不用记了，模式切换本身已经有一行日志。
     guard State.lowBattery != was, State.mode == .on else { return }
     log(State.lowBattery
-        ? L("电量降到 10%，暂时放行睡眠，免得直接断电", "Battery at 10%: allowing sleep for now to avoid a hard power-off")
+        ? L("电量降到 \(options.batteryLimit)%，暂时放行睡眠，免得直接断电", "Battery reached \(options.batteryLimit)%: allowing sleep")
         : L("电量或供电已恢复，低电量保护解除", "Battery or power is back: low-battery protection lifted"))
 }
 
 func wantsLidlight() -> Bool {
-    switch State.mode {
-    case .auto: return onACPower()
-    case .on: return !State.lowBattery
-    case .off: return false
-    }
+    PowerPolicy.awake(mode: State.mode.rawValue, onAC: onACPower(), lowBattery: State.lowBattery, acOnly: options.acOnly)
 }
 
 // 第二道保险。disablesleep 管的是合盖睡眠，但别的程序改电源设置时会把它清掉；
 // 这个断言管空闲睡眠，在 disablesleep 被清掉到我们补回去之间，机器不会因为没人操作而睡着。
 func holdAssertion(_ on: Bool) {
+    guard !dryRun else { return }
     if on, State.assertion == 0 {
         var id: IOPMAssertionID = 0
         let result = IOPMAssertionCreateWithName(
@@ -177,9 +175,26 @@ func holdAssertion(_ on: Bool) {
 }
 
 func sync() {
+    if options.oneShot && onACPower() { State.sessionStartedOnAC = true }
+    if options.deadline > 0 && Date().timeIntervalSince1970 >= options.deadline ||
+       options.oneShot && State.sessionStartedOnAC && !onACPower() {
+        let resume = Mode(rawValue: options.resumeMode) ?? .auto
+        options.deadline = 0; options.oneShot = false; options.presentation = false
+        saveOptions()
+        setMode(resume)
+        return
+    }
     updateLowBattery()
     let want = wantsLidlight()
     holdAssertion(want)
+    if !dryRun {
+        if options.presentation && want && State.displayAssertion == 0 {
+            IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn), "Lidlight presentation" as CFString, &State.displayAssertion)
+        } else if (!options.presentation || !want) && State.displayAssertion != 0 {
+            if IOPMAssertionRelease(State.displayAssertion) == kIOReturnSuccess { State.displayAssertion = 0 }
+        }
+    }
     // 以系统里的真实值为准，别的工具或手动 pmset 改掉了也要纠正回来。
     let current = dryRun ? State.applied : rootDomainFlag("SleepDisabled")
     guard want != current else {
@@ -242,7 +257,7 @@ func publishMode() {
 
 func setMode(_ mode: Mode) {
     // 退出时会再次请求关闭；即使模式已经是 off，也重试保存和应用，修复先前的失败。
-    guard mode != State.mode || mode == .off else { return }
+    guard mode != State.mode || mode == .off else { sync(); return }
     if mode != State.mode {
         log(L("模式切换为：", "Mode set to: ") + mode.label)
     }
@@ -285,6 +300,18 @@ if !dryRun,
     State.mode = mode
 }
 
+// A one-shot session never survives a service restart.
+if options.oneShot {
+    State.mode = Mode(rawValue: options.resumeMode) ?? .auto
+    options.oneShot = false; options.presentation = false
+}
+if options.startupAuto { State.mode = .auto; options.deadline = 0; options.presentation = false }
+if options.deadline > 0 && options.deadline <= Date().timeIntervalSince1970 {
+    State.mode = Mode(rawValue: options.resumeMode) ?? .auto
+    options.deadline = 0; options.presentation = false
+}
+saveOptions()
+if !dryRun { try? State.mode.name.write(toFile: modeFile, atomically: true, encoding: .utf8) }
 notify_register_check("\(notifyPrefix).state", &State.stateToken)
 // 菜单栏的体检窗口从这里读「被其他程序改动了多少次」。
 notify_register_check("\(notifyPrefix).overrides", &State.overridesToken)
@@ -292,7 +319,49 @@ notify_set_state(State.overridesToken, 0)
 var commandTokens: [Int32] = []
 for mode in Mode.allCases {
     var token: Int32 = 0
-    notify_register_dispatch("\(notifyPrefix).set-\(mode.name)", &token, .main) { _ in setMode(mode) }
+    notify_register_dispatch("\(notifyPrefix).set-\(mode.name)", &token, .main) { _ in
+        options.deadline = 0; options.oneShot = false; options.presentation = false
+        saveOptions()
+        setMode(mode)
+    }
+    commandTokens.append(token)
+}
+
+// Option payloads contain only bounded numeric values; no commands or file paths.
+for key in ["battery-limit", "ac-only", "startup-auto", "presentation", "deadline", "one-shot"] {
+    var token: Int32 = 0
+    notify_register_dispatch("\(notifyPrefix).option-\(key)", &token, .main) { received in
+        var value: UInt64 = 0
+        guard notify_get_state(received, &value) == NOTIFY_STATUS_OK else { return }
+        switch key {
+        case "battery-limit": guard (10...50).contains(value) else { return }; options.batteryLimit = Int(value)
+        case "ac-only": guard value <= 1 else { return }; options.acOnly = value == 1
+        case "startup-auto": guard value <= 1 else { return }; options.startupAuto = value == 1
+        case "presentation": guard value <= 1 else { return }; options.presentation = value == 1
+        case "deadline":
+            let now = Date().timeIntervalSince1970
+            guard value == 0 || Double(value) > now && Double(value) <= now + 7 * 86400 else { return }
+            if value > 0 && options.oneShot { return }
+            if value == 0 && options.deadline == 0 { return }
+            if options.deadline == 0 && !options.oneShot { options.resumeMode = State.mode.rawValue }
+            options.deadline = Double(value)
+            if value > 0 { State.mode = .on }
+            else { State.mode = Mode(rawValue: options.resumeMode) ?? .auto; options.presentation = false }
+        case "one-shot":
+            guard value <= 1 else { return }
+            if value == 1 && (options.oneShot || options.deadline > 0) { return }
+            if value == 0 && !options.oneShot { return }
+            if value == 1 {
+                options.resumeMode = State.mode.rawValue; options.oneShot = true
+                State.sessionStartedOnAC = onACPower(); State.mode = .on
+            } else { options.oneShot = false; options.presentation = false; State.mode = Mode(rawValue: options.resumeMode) ?? .auto }
+        default: return
+        }
+        saveOptions()
+        // Save the selected mode and update published state even when it is unchanged.
+        if !dryRun { try? State.mode.name.write(toFile: modeFile, atomically: true, encoding: .utf8) }
+        publishMode(); sync()
+    }
     commandTokens.append(token)
 }
 

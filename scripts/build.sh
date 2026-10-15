@@ -27,7 +27,7 @@ compile() {
     local source=$1 output=$2 name
     name=$(basename "$output")
     for arch in arm64 x86_64; do
-        swiftc -O -target "$arch-apple-macos$MIN_OS" "$source"/*.swift -o "$BUILD/obj/$name-$arch"
+        swiftc -O -target "$arch-apple-macos$MIN_OS" "$source"/*.swift Sources/Shared/*.swift -o "$BUILD/obj/$name-$arch"
     done
     lipo -create "$BUILD/obj/$name-arm64" "$BUILD/obj/$name-x86_64" -output "$output"
 }

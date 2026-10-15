@@ -22,6 +22,10 @@ enum Health {
         case .critical: thermal = "Critical"
         @unknown default: thermal = "Unknown"
         }
+        let options = (try? Data(contentsOf: URL(fileURLWithPath: "/var/db/lidlight-options.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) }
+            .flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "Unavailable"
         return """
         Lidlight \(version)
         \(ProcessInfo.processInfo.operatingSystemVersionString)
@@ -30,6 +34,7 @@ enum Health {
         Mode: \(setting)
         Power: \(powerDescription())
         Thermal: \(thermal)
+        Options: \(options)
         """
     }
 }

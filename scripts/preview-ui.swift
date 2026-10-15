@@ -13,7 +13,11 @@ import SwiftUI
         if CommandLine.arguments.contains("--offline") { state.running = false; state.awake = nil; state.mode = nil }
         state.details = CommandLine.arguments.contains("--details")
         state.power = "Power Adapter · 100%"
-        let view = NSHostingView(rootView: Dashboard(state: state, select: { _ in }, toggleDim: {}, copyDiagnostics: {}, quit: {}))
+        let features = Features(defaults: UserDefaults(suiteName: "com.lidlight.preview")!)
+        features.reason = "Automatic · power adapter connected"
+        features.nextAction = "Unplugging allows normal sleep."
+        if let index = CommandLine.arguments.firstIndex(of: "--page"), CommandLine.arguments.count > index + 1 { features.page = CommandLine.arguments[index + 1] }
+        let view = NSHostingView(rootView: Dashboard(state: state, features: features, select: { _ in }, toggleDim: {}, copyDiagnostics: {}, quit: {}))
         view.frame = NSRect(origin: .zero, size: view.fittingSize)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view

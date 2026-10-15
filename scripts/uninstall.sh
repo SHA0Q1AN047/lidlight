@@ -16,6 +16,11 @@ fi
 if launchctl print system/com.lidlight.daemon >/dev/null 2>&1; then
     launchctl bootout system/com.lidlight.daemon
 fi
+# launchctl may return before the daemon finishes restoring sleep.
+for attempt in {1..50}; do
+    if ! pgrep -x lidlightd >/dev/null; then break; fi
+    sleep 0.1
+done
 if pgrep -x lidlightd >/dev/null; then
     echo "后台服务仍在运行，停止卸载 / Service is still running; uninstall stopped" >&2
     exit 1
@@ -27,7 +32,7 @@ pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
 rm -f /Library/LaunchAgents/com.lidlight.menubar.plist \
       /Library/LaunchDaemons/com.lidlight.daemon.plist \
       /Library/PrivilegedHelperTools/lidlightd \
-      /var/db/lidlight \
+      /var/db/lidlight /var/db/lidlight-options.json \
       /var/log/lidlight.log /var/log/lidlight.log.1
 # 只删我们自己建的那个软链接。
 if [ -L /usr/local/bin/lidlight ] &&

@@ -9,6 +9,7 @@ preamble = '''
 id() { echo 0; }
 stat() { echo 501; }
 launchctl() { if [ "$1" = print ]; then return 0; fi; return "${STOP_STATUS:-0}"; }
+sleep() { :; }
 pgrep() { return "${RUNNING_STATUS:-1}"; }
 pmset() {
     if [ "$1" = -a ]; then return "${RESTORE_STATUS:-0}"; fi

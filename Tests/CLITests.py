@@ -34,11 +34,11 @@ esac
     cli.write_text(source)
     log = root / 'calls'
 
-    def run(command='status', **values):
+    def run(command='status', args=(), **values):
         log.write_text('')
         env = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'],
                    CALL_LOG=str(log), **values)
-        return subprocess.run(['sh', str(cli), command], env=env,
+        return subprocess.run(['sh', str(cli), command, *args], env=env,
                               capture_output=True, text=True, timeout=5)
 
     result = run()
@@ -56,4 +56,13 @@ esac
     result = run('on', SERVICE_STATUS='1')
     assert result.returncode == 1 and 'not running' in result.stderr
     assert run('invalid').returncode == 2
+    for command in ['timer', 'until', 'presentation']:
+        assert run(command).returncode == 2
+    for bad in ['-1', '0', '10081', '999999999999999999999999', 'oops']:
+        assert run('timer', args=[bad]).returncode == 2
+    assert run('timer', args=['30']).returncode == 0
+    assert run('until', args=['999999999999999999']).returncode == 2
+    assert run('presentation', args=['invalid']).returncode == 2
+    assert run('once').returncode == 0
+    assert run('cancel').returncode == 0
 print('PASS: unknown state, single power snapshot, three modes, timeout, request failure, stopped service, usage')

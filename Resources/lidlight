@@ -39,6 +39,14 @@ status() {
     echo "版本 Version:         ${version:-?}"
 }
 
+option() {
+    if ! /usr/bin/pgrep -x lidlightd >/dev/null; then
+        echo "Lidlight background service is not running" >&2
+        exit 1
+    fi
+    /usr/bin/notifyutil -s "$PREFIX.option-$1" "$2" -p "$PREFIX.option-$1" || exit 1
+}
+
 case "${1:-status}" in
     status) status ;;
     auto|on|off)
@@ -66,6 +74,29 @@ case "${1:-status}" in
         status
         exit 1
         ;;
+    timer)
+        case "${2:-}" in ''|*[!0-9]*) echo 'Usage: lidlight timer <minutes: 1..10080>' >&2; exit 2 ;; esac
+        if [ "${#2}" -gt 5 ]; then exit 2; fi
+        if [ "$2" -lt 1 ] || [ "$2" -gt 10080 ]; then exit 2; fi
+        option deadline "$(( $(date +%s) + $2 * 60 ))"
+        echo "Timer requested for $2 minutes. The service restores the previous mode at expiry."
+        ;;
+    until)
+        case "${2:-}" in ''|*[!0-9]*) echo 'Usage: lidlight until <Unix timestamp>' >&2; exit 2 ;; esac
+        if [ "${#2}" -gt 11 ]; then exit 2; fi
+        now=$(date +%s)
+        if [ "$2" -le "$now" ] || [ "$2" -gt "$((now + 604800))" ]; then exit 2; fi
+        option deadline "$2"
+        ;;
+    cancel) option deadline 0; option one-shot 0; option presentation 0 ;;
+    once) option one-shot 1 ;;
+    presentation)
+        case "${2:-}" in
+            on) option one-shot 1; option presentation 1 ;;
+            off) option one-shot 0; option presentation 0 ;;
+            *) echo 'Usage: lidlight presentation on|off' >&2; exit 2 ;;
+        esac
+        ;;
     log) /usr/bin/tail -n "${2:-30}" "$LOG" ;;
     check) "$APP/Contents/MacOS/Lidlight" --print-diagnostics ;;
     screen-on)
@@ -77,7 +108,7 @@ case "${1:-status}" in
         fi
         ;;
     *)
-        echo "用法 Usage: lidlight [status|auto|on|off|log [N]|check|screen-on]" >&2
+        echo "用法 Usage: lidlight [status|auto|on|off|timer MIN|until UNIX|cancel|once|presentation on/off|log [N]|check|screen-on]" >&2
         exit 2
         ;;
 esac
