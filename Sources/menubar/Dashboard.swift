@@ -15,6 +15,7 @@ final class DashboardState: ObservableObject {
 struct Dashboard: View {
     @ObservedObject var state: DashboardState
     @ObservedObject var features: Features
+    @ObservedObject var quota: CodexQuota
     let select: (Int) -> Void
     let toggleDim: () -> Void
     let copyDiagnostics: () -> Void
@@ -35,7 +36,9 @@ struct Dashboard: View {
         }
         ScrollView(.vertical, showsIndicators: true) {
         VStack(alignment: .leading, spacing: 14) {
-            if features.page != "home" {
+            if features.page == "codex" {
+                CodexQuotaView(quota: quota)
+            } else if features.page != "home" {
                 FeaturePages(features: features)
             } else if state.details {
                 diagnosticsContent
@@ -60,6 +63,15 @@ struct Dashboard: View {
                 Text(features.nextAction).font(.system(size: 10)).foregroundColor(.gray).fixedSize(horizontal: false, vertical: true)
                 Divider().overlay(Color.white.opacity(0.08))
                 Label(state.power, systemImage: "bolt.fill").font(.system(size: 12)).foregroundColor(mint)
+                Button { features.page = "codex"; quota.refresh() } label: {
+                    HStack {
+                        Image(systemName: "chart.bar.xaxis")
+                        Text(quota.enabled ? "Codex · " + quota.summary : "Codex quota · Off")
+                        if quota.message != nil { Image(systemName: "exclamationmark.circle") }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }.font(.system(size: 11)).foregroundColor(.gray)
+                }.buttonStyle(.plain)
             }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color.white.opacity(0.045)).cornerRadius(18)
             VStack(alignment: .leading, spacing: 10) {
                 Text("POWER MODE").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundColor(.gray)

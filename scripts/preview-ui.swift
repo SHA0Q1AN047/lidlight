@@ -17,7 +17,10 @@ import SwiftUI
         features.reason = "Automatic · power adapter connected"
         features.nextAction = "Unplugging allows normal sleep."
         if let index = CommandLine.arguments.firstIndex(of: "--page"), CommandLine.arguments.count > index + 1 { features.page = CommandLine.arguments[index + 1] }
-        let view = NSHostingView(rootView: Dashboard(state: state, features: features, select: { _ in }, toggleDim: {}, copyDiagnostics: {}, quit: {}))
+        let quota = CodexQuota()
+        quota.windows = [QuotaWindow(id: "primary", used: 25, minutes: 300, resetsAt: Date().addingTimeInterval(3600)), QuotaWindow(id: "secondary", used: 10, minutes: 10080, resetsAt: Date().addingTimeInterval(86400))]
+        quota.updated = Date()
+        let view = NSHostingView(rootView: Dashboard(state: state, features: features, quota: quota, select: { _ in }, toggleDim: {}, copyDiagnostics: {}, quit: {}))
         view.frame = NSRect(origin: .zero, size: view.fittingSize)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view

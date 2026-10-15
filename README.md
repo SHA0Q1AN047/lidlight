@@ -22,6 +22,10 @@ A focused macOS menu bar app that keeps your MacBook awake with the lid closed.
 
 App/process/schedule/display rules require Lidlight to stay running. Timed deadlines and power safety run in the root service. No account, cloud sync, telemetry or automatic updater.
 
+## Codex account quota
+
+The optional Codex card shows remaining quota percentages and reset times. It uses the installed Codex CLI/app's documented `account/rateLimits/read` interface with your existing ChatGPT sign-in. It does not copy credentials, request an API key, create inference turns or send usage to a Lidlight server. Automatic checks run every five minutes; failures retain clearly labelled cached readings. This is Codex quota, not an exact remaining-token balance or all ChatGPT model limits. Requires a locally installed and signed-in Codex CLI or supported desktop app.
+
 ## Rules and safety
 
 The selected manual mode is the base. App, display and schedule rules temporarily request awake mode; when all matching rules end, the base returns. Manual Allow sleep pauses these rules. Timed, one-shot, presentation and watched-process sessions take priority. Battery and AC-only protections always take precedence.

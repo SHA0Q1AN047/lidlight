@@ -48,6 +48,7 @@ func daemonRunning() -> Bool {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let dashboard = DashboardState()
     let features = Features()
+    let quota = CodexQuota()
     let popover = NSPopover()
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let lidScreen = LidScreen()
@@ -72,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         popover.contentSize = NSSize(width: 380, height: 600)
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: Dashboard(
-            state: dashboard, features: features,
+            state: dashboard, features: features, quota: quota,
             select: { [weak self] index in
                 self?.features.select(index)
                 self?.refreshSoon()
@@ -112,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }, context)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; self.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; self.quota.refresh(); self.refresh() }
         lidTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let modeOn = rootDomainFlag("SleepDisabled"),
                   let lidClosed = rootDomainFlag("AppleClamshellState") else { return }
@@ -130,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         features.restoreScreen = { [weak self] in self?.lidScreen.forceOn() ?? false }
         features.didChange = { [weak self] in self?.refresh() }
         features.start()
+        quota.refresh()
         refresh()
         if CommandLine.arguments.contains("--health-check") { toggleDashboard(); dashboard.details = true }
     }
