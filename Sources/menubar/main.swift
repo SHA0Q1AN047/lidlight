@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     let dashboard = DashboardState()
     let features = Features()
     let quota = CodexQuota()
+    let monitor = PerformanceMonitor()
+    let cpuReader = CPUUsageReader()
+    let menuCat = MenuCatAnimator()
+    private lazy var verification = InstallVerification(runningVersion: BuildVersion.current)
+    private var displaysSleeping = false
+    @MainActor private lazy var updater = AppUpdater()
     let popover = NSPopover()
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let lidScreen = LidScreen()
@@ -71,9 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 380, height: 600)
-        popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: Dashboard(
-            state: dashboard, features: features, quota: quota,
+            state: dashboard, features: features, quota: quota, updater: updater, monitor: monitor, verification: verification,
             select: { [weak self] index in
                 self?.features.select(index)
                 self?.refreshSoon()
@@ -103,6 +108,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self?.userRequestedQuit = true
                 NSApp.terminate(nil)
             }))
+        menuCat.attach(statusItem.button)
+        _ = cpuReader.sample()
+        let workspaceEvents = NSWorkspace.shared.notificationCenter
+        workspaceEvents.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.displaysSleeping = true
+            self?.cpuReader.reset()
+            self?.menuCat.pause()
+        }
+        workspaceEvents.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.displaysSleeping = false
+            self?.cpuReader.reset()
+            _ = self?.cpuReader.sample()
+        }
+        workspaceEvents.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.cpuReader.reset()
+        }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggleDashboard)
         notify_register_dispatch("\(notifyPrefix).state", &stateToken, .main) { [weak self] _ in self?.refreshSoon() }
@@ -113,12 +134,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }, context)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; self.quota.refresh(); self.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; if !self.displaysSleeping { self.quota.refresh(); Task { @MainActor in self.updater.check() } }; self.refresh() }
         lidTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.monitor.refresh(visible: self?.popover.isShown == true && self?.displaysSleeping == false, includeProcesses: self?.features.page == "performance")
+            if let self {
+                let animate = UserDefaults.standard.object(forKey: "animateMenuCat") as? Bool ?? true
+                let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                let active = animate && !reduced && !self.displaysSleeping
+                let load = active ? self.cpuReader.sample() : nil
+                if !active { self.cpuReader.reset() }
+                let pressure = ProcessInfo.processInfo.thermalState
+                self.menuCat.updateThermal(high: pressure == .serious || pressure == .critical)
+                self.menuCat.update(usage: load, enabled: active, reduceMotion: reduced)
+            }
+
             guard let modeOn = rootDomainFlag("SleepDisabled"),
                   let lidClosed = rootDomainFlag("AppleClamshellState") else { return }
             self?.lidScreen.tick(modeOn: modeOn, lidClosed: lidClosed)
         }
+        timer?.tolerance = 1
+        lidTimer?.tolerance = 0.15
         if rootDomainFlag("AppleClamshellState") == false { lidScreen.restore() }
         signal(SIGTERM, SIG_IGN)
         termSource.setEventHandler { [weak self] in
@@ -132,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         features.didChange = { [weak self] in self?.refresh() }
         features.start()
         quota.refresh()
+        updater.check()
         refresh()
         if CommandLine.arguments.contains("--health-check") { toggleDashboard(); dashboard.details = true }
     }
@@ -141,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if popover.isShown { popover.close() } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             refresh()
+            monitor.refresh(visible: true)
         }
     }
 
@@ -156,10 +193,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func refresh() {
-        let enabled = rootDomainFlag("SleepDisabled")
-        statusItem.button?.image = features.low ? MenuBarIcon.lowBattery : MenuBarIcon.image(awake: enabled)
-        statusItem.button?.title = features.preferences.countdown ? features.countdownText : ""
-        statusItem.button?.toolTip = "Lidlight · " + features.reason + (features.countdownText.isEmpty ? "" : " · " + features.countdownText)
+        let event = features.countdownEvent?.label(compact: true) ?? ""
+        let timer = features.preferences.countdown ? features.countdownText : ""
+        statusItem.button?.title = [event,timer].filter { !$0.isEmpty }.joined(separator: " · ")
+        let eventDetail = features.countdownEvent?.label() ?? ""
+        menuCat.setStatus("Lidlight · " + features.reason + (eventDetail.isEmpty ? "" : " · " + eventDetail) + (features.countdownText.isEmpty ? "" : " · " + features.countdownText), lowBattery: features.low)
         // Hidden panels do not need process scans or power-source snapshots.
         guard popover.isShown, !refreshing else { return }
         refreshing = true
@@ -173,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 let known = notify_get_state(self.stateToken, &mode) == NOTIFY_STATUS_OK
                 self.dashboard.awake = rootDomainFlag("SleepDisabled")
                 self.dashboard.running = running
+                self.verification.refresh(serviceRunning: running)
                 self.dashboard.mode = running && known && mode < 3 ? Int(mode) : nil
                 self.dashboard.power = power
                 self.dashboard.dim = self.lidScreen.enabled
@@ -180,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { lidScreen.restore() }
+    func applicationWillTerminate(_ notification: Notification) { menuCat.pause(); lidScreen.restore() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard userRequestedQuit,

@@ -8,6 +8,14 @@ import Foundation
         defaults.set(Int32(42), forKey: "watchedPID")
         defaults.set("old-process", forKey: "watchedIdentity")
         let features = Features(defaults: defaults)
+        precondition(features.countdownEvent == nil, "No event means no menu countdown")
+        var changes = 0
+        features.didChange = { changes += 1 }
+        features.saveCountdown(name: "Trip",date: Date().addingTimeInterval(86400 * 10))
+        precondition(features.countdownEvent?.name == "Trip" && changes == 1)
+        precondition(Features(defaults: defaults).countdownEvent == features.countdownEvent, "Saved event survives relaunch")
+        features.clearCountdown()
+        precondition(features.countdownEvent == nil && Features(defaults: defaults).countdownEvent == nil && changes == 2, "Remove hides it immediately and persistently")
         features.preferences.baseMode = 1
         features.preferences.threshold = 20
         features.preferences.rulesPaused = false

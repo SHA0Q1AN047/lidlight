@@ -4,6 +4,8 @@ A focused macOS menu bar app that keeps your MacBook awake with the lid closed.
 
 ![Lidlight panel](docs/lidlight-preview.png)
 
+Layout preview with solid accessibility surfaces and sample quota data. macOS 26 uses clear native Liquid Glass for controls and navigation, with ultra-thin content surfaces and a subtle iris/mist/peach gradient. Lavender accents adapt to light and dark appearances. Appearance follows the system; Reduce Transparency uses solid surfaces. macOS 12–15 use standard materials.
+
 ## Features
 
 - Automatic, Stay awake and Allow sleep, with confirmation of actual system state.
@@ -15,16 +17,68 @@ A focused macOS menu bar app that keeps your MacBook awake with the lid closed.
 - AC-only protection and adjustable low-battery protection (10–50%) with five-point recovery hysteresis.
 - Optional low-battery notifications and configurable global shortcut presets (Command–Option–L or Command–Option–Shift–L).
 - Launch-at-login and restart-mode preferences.
-- Pixel laptop expressions, optional menu-bar countdown, current reason and next-action explanations.
+- CPU-paced pixel cat, optional menu-bar countdown, current reason and next-action explanations.
 - Local activity history (40 events), power-setting conflict reporting and battery percentage-drop estimates.
 - Display off, lock-and-run, emergency brightness restoration and administrator-authorized service recovery.
 - Local clipboard diagnostics and safe quit/uninstall.
 
-App/process/schedule/display rules require Lidlight to stay running. Timed deadlines and power safety run in the root service. No account, cloud sync, telemetry or automatic updater.
+App/process/schedule/display rules require Lidlight to stay running. Timed deadlines and power safety run in the root service. No Lidlight account, cloud sync or telemetry. Update checks contact GitHub; downloads and installation are user initiated.
+
+## Compact home, heat and update verification
+
+The home page keeps quota weather, a short usage trend and live performance visible. Click the power status card to switch modes directly; backlight control remains under Controls. Each quota window shows its reset countdown, and the home performance card includes two-minute mini trends. The menu cat sweats only after macOS reports serious or critical thermal pressure for 15 seconds continuously, clearing when the system recovers. CPU temperature alone never triggers this warning. Hover over the cat for its gait, CPU usage and thermal warning. Screen sleep pauses animation, quota refresh and update checks; sensor reads stop when the panel closes.
+
+Updates shows the running app, installed app and live service versions separately. A successful in-app update is confirmed only when all three match and the service is running. The root service answers a fresh random challenge with a root-owned version receipt; the UI validates the challenge, file permissions and live executable path. Stale receipts cannot confirm an upgrade. Old services with no receipt remain unverified instead of showing success. Opening Installer alone never confirms an upgrade.
+
+Quota readings are saved locally for at most 24 hours / 600 points. A trend needs three observations spanning at least 10 minutes, no gaps over 15 minutes and the same quota reset boundary. Refills, decreases, expired windows and stale data invalidate the trend. The observed points/hour rate is not an exhaustion-time prediction. The quota page can clear local history.
+
+## CPU-paced menu cat
+
+The template menu icon is a six-frame pixel cat: it walks at 2 FPS below 10% overall CPU use and accelerates to 12 FPS at full load. Whole-system kernel tick deltas are read once per second, with light smoothing to avoid abrupt speed changes; hovering shows CPU percentage. Frames are cached and stay the same size in light/dark menu bars. The low-battery warning remains visible on the cat.
+
+Settings → Animate menu cat disables motion. The system Reduce Motion setting also keeps it still. Display sleep pauses the animation and CPU sampling; waking primes fresh counters. The SMC performance monitor still samples only while the panel is open. Cat animation needs no subprocess, network or administrator authorization.
+
+Walking / running previews (enlarged):
+
+![Walking cat](docs/cat-walking.gif) ![Running cat](docs/cat-running.gif)
+
+## Day countdown
+
+Open **Settings → Day countdown** (also in Sessions), enter an event name and choose a date, then save. The menu bar shows the name and calendar days remaining, alongside an active session timer if enabled. With no saved event, it adds no menu text. Remove the countdown to hide it. It persists across restarts, follows local calendar days across daylight-saving changes, shows Today on the event date, and days ago afterward. Names longer than 12 characters are shortened in the menu bar; the tooltip keeps the full name (up to 80 characters).
+
+## Supply check and quota recovery
+
+Controls checks for a battery drop of at least two percentage points across 3–5 minutes while continuously on AC. It resets after sleep, unplugging or a rising battery level. It warns about supply balance, not measured adapter wattage; a stable charging limit never triggers it.
+
+Enable **Notify when quota is available again** on the Codex page and allow notifications. A successful quota check must first observe exhaustion, then confirm all observed windows are usable. A reset countdown or partial response cannot trigger recovery. The pending observation persists locally across restarts; checks remain limited to every five minutes while displays are awake.
+
+## Performance monitor
+
+The home page shows system watts, the hottest available CPU sensor and maximum fan RPM. Open Performance for each fan, a two-minute trend and the three highest CPU processes macOS permits Lidlight to read. CPU percentages use 100% per core and may exceed 100%; scans only run while the Performance page is open. Names stay local. Hardware readings are sampled on a background queue about every two seconds only while the panel is open; closing it pauses sampling. History stays in memory, capped at 60 samples, and stale values are hidden after six seconds. CPU readings outside the conservative 10–130°C display range are unavailable, rather than plotted as low-temperature artifacts; sensor availability is retried every sample.
+
+The read-only AppleSMC client uses `PSTR` for device-reported system power, model-specific CPU thermal sensors, and `FNum` / `F*Ac` for fans. It never changes fan control or thermal policy and does not launch powermetrics. System power is a hardware sensor reading, not a wall-outlet measurement or a sum of CPU/GPU estimates. The displayed temperature is the hottest supported CPU sensor, not a claim about an individual core. Fanless hardware is shown only when the controller reports zero fans; a stopped fan reads 0 RPM, and inaccessible sensors read Unavailable.
+
+Validated without additional sensor authorization on an M2 Pro MacBook Pro running macOS 26.1, including both fans. Other Macs expose different undocumented sensors and may restrict access; unknown CPU families do not guess temperature mappings. Sensor-key reference: [Stats sensor definitions](https://github.com/exelban/stats/blob/master/Modules/Sensors/values.swift). No external sensor library is bundled.
+
+## Updates
+
+Settings → Updates checks this repository's GitHub Releases. Automatic checks run every six hours and can be disabled. A home-page badge appears when a newer version is available. Preview releases are opt-in. Download & update verifies the exact file size and GitHub SHA-256 asset digest, then opens macOS Installer. Installation still requires administrator authorization and preserves preferences; the package restarts the app and service. No silent background installation is performed. Releases without a digest cannot be installed through the app.
+
+Versions without the updater need this release installed manually once.
+
+To publish a future stable update, increase `VERSION` (three numbers, for example `1.3.1`), commit the reviewed changes on `main`, then run:
+
+```sh
+bash scripts/release.sh
+# Or supply your own release notes:
+bash scripts/release.sh /absolute/path/to/notes.md
+```
+
+The script tests the updater, quota weather, performance monitor and menu cat, builds, pushes `main` and a new tag, and uploads **Lidlight.pkg** to a stable GitHub Release. GitHub supplies its digest automatically. It refuses to overwrite an existing release. Users must enable preview releases to receive releases marked **Pre-release**. Merely pushing a commit or tag does not publish an update.
 
 ## Codex account quota
 
-The optional Codex card shows remaining quota percentages and reset times. It uses the installed Codex CLI/app's documented `account/rateLimits/read` interface with your existing ChatGPT sign-in. It does not copy credentials, request an API key, create inference turns or send usage to a Lidlight server. Automatic checks run every five minutes; failures retain clearly labelled cached readings. This is Codex quota, not an exact remaining-token balance or all ChatGPT model limits. Requires a locally installed and signed-in Codex CLI or supported desktop app.
+The home-page Codex Weather meter keeps both remaining percentages visible with hand-drawn pixel icons: sunny at 50%+, cloudy at 20–49%, sunset below 20%, and a sleeping moon when a limit is reached. Each window has its own weather; the caption reflects the tighter limit. Thresholds follow the displayed rounded percentages. Errors and readings older than 15 minutes show an unknown sky with explicitly cached numbers; expired windows show reset pending instead of assuming a refill. No additional network checks or animation timers are used. The quota details page shows reset times. It uses the installed Codex CLI/app's documented `account/rateLimits/read` interface with your existing ChatGPT sign-in. It does not copy credentials, request an API key, create inference turns or send usage to a Lidlight server. Automatic checks run every five minutes; failures retain clearly labelled cached readings. This is Codex quota, not an exact remaining-token balance or all ChatGPT model limits. Requires a locally installed and signed-in Codex CLI or supported desktop app.
 
 ## Rules and safety
 
@@ -36,13 +90,13 @@ Screen off uses macOS display sleep and may lock according to system preferences
 
 ## Install
 
-Requires macOS 12 or later, Apple silicon or Intel. Download `Lidlight.pkg` from this repository's Releases page, open it and follow the installer. An administrator password is required. The pixel laptop icon in the menu bar opens the panel.
+Requires macOS 12 or later, Apple silicon or Intel. Download `Lidlight.pkg` from this repository's Releases page, open it and follow the installer. An administrator password is required. The pixel cat in the menu bar opens the panel.
 
 This community build is **not Developer ID signed or Apple notarized**. macOS may block it. If you trust the source, review the notice in System Settings → Privacy & Security. A successful build does not replace testing lid-close, power switching and brightness recovery on your own hardware.
 
 ## Build
 
-Requires the Xcode Command Line Tools with Swift and the macOS packaging tools.
+Requires the Xcode 26 / macOS 26 SDK, Swift and the macOS packaging tools. The deployment target remains macOS 12.
 
 ```sh
 bash scripts/build.sh
@@ -58,10 +112,20 @@ python3 Tests/UninstallTests.py
 bash scripts/test-quit.sh
 swiftc Sources/Shared/PowerPolicy.swift Tests/PowerPolicyTests.swift -o /tmp/lidlight-policy-tests
 /tmp/lidlight-policy-tests
-swiftc Sources/menubar/Features.swift Sources/Shared/PowerPolicy.swift Tests/FeatureStateTests.swift -o /tmp/lidlight-feature-tests
+swiftc Sources/menubar/Features.swift Sources/menubar/PowerSupply.swift Sources/menubar/DayCountdown.swift Sources/Shared/PowerPolicy.swift Tests/FeatureStateTests.swift -o /tmp/lidlight-feature-tests
 /tmp/lidlight-feature-tests
 # After building, exercises only the isolated dry-run notification namespace:
 python3 Tests/DaemonFeatureTests.py
+swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sources/menubar/QuotaWeather.swift Tests/QuotaWeatherTests.swift -o /tmp/lidlight-weather-tests
+/tmp/lidlight-weather-tests
+swiftc Sources/menubar/CPUUsage.swift Sources/menubar/CatThermal.swift Sources/menubar/MenuBarIcon.swift Sources/menubar/MenuCatAnimator.swift Tests/MenuCatTests.swift -o /tmp/lidlight-cat-tests
+/tmp/lidlight-cat-tests
+swiftc Sources/menubar/ProcessCPU.swift Sources/menubar/HardwareSensors.swift Sources/menubar/PerformanceMonitor.swift Tests/PerformanceTests.swift -o /tmp/lidlight-performance-tests
+/tmp/lidlight-performance-tests
+swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sources/menubar/CatThermal.swift Sources/menubar/InstallVerification.swift Sources/Shared/ServiceReceipt.swift Tests/ImprovementsTests.swift -o /tmp/lidlight-improvements-tests
+/tmp/lidlight-improvements-tests
+swiftc Sources/menubar/AppUpdater.swift Tests/AppUpdaterTests.swift -o /tmp/lidlight-updater-tests
+/tmp/lidlight-updater-tests
 swiftc Sources/menubar/Health.swift Tests/HealthTests.swift -o /tmp/lidlight-health-tests
 /tmp/lidlight-health-tests
 ```

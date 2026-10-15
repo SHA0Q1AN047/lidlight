@@ -405,4 +405,18 @@ log(L("lidlightd 启动", "lidlightd started") + (dryRun ? " (dry-run)" : "")
     + L("，模式：", ", mode: ") + State.mode.label)
 publishMode()
 sync()
+var versionRequestToken: Int32 = 0
+var lastVersionResponse = -Double.infinity
+if !dryRun {
+    notify_register_dispatch("com.lidlight.version-request",&versionRequestToken,.main) { _ in
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard uptime-lastVersionResponse >= 1 else { return }
+        lastVersionResponse = uptime
+        var nonce: UInt64 = 0
+        if notify_get_state(versionRequestToken,&nonce) == NOTIFY_STATUS_OK, nonce != 0 {
+            ServiceReceipt.publish(version: BuildVersion.current,nonce: nonce)
+        }
+    }
+    ServiceReceipt.publish(version: BuildVersion.current)
+}
 CFRunLoopRun()

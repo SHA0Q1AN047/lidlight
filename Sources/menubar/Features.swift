@@ -68,6 +68,8 @@ final class HotKey {
 }
 
 final class Features: ObservableObject {
+    @Published private(set) var countdownEvent: DayCountdown?
+    @Published var supply = SupplyAssessment()
     @Published var preferences: Preferences
     @Published var page = "home"
     @Published var reason = "Reading system state…"
@@ -114,10 +116,20 @@ final class Features: ObservableObject {
     }
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        countdownEvent = DayCountdown.load(defaults: defaults)
         preferences = defaults.data(forKey: "preferences.v1").flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
         history = defaults.stringArray(forKey: "activity") ?? []
         taskPID = defaults.object(forKey: "watchedPID") as? Int32
         taskIdentity = defaults.string(forKey: "watchedIdentity")
+    }
+    func saveCountdown(name: String, date: Date) {
+        guard let event = DayCountdown(name: name,date: date), let data = try? JSONEncoder().encode(event) else { return }
+        defaults.set(data,forKey: "dayCountdown")
+        countdownEvent = event; didChange()
+    }
+    func clearCountdown() {
+        defaults.removeObject(forKey: "dayCountdown")
+        countdownEvent = nil; didChange()
     }
     func start() {
         let config = options
@@ -316,6 +328,7 @@ final class Features: ObservableObject {
     }
     func tick() {
         let power = PowerSnapshot.read()
+        supply.update(ac: power.ac, percent: power.percent)
         let config = options
         let awake = actualAwake()
         let current = mode

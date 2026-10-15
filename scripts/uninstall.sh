@@ -32,7 +32,7 @@ pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
 rm -f /Library/LaunchAgents/com.lidlight.menubar.plist \
       /Library/LaunchDaemons/com.lidlight.daemon.plist \
       /Library/PrivilegedHelperTools/lidlightd \
-      /var/db/lidlight /var/db/lidlight-options.json \
+      /var/run/lidlight-runtime.json /var/db/lidlight /var/db/lidlight-options.json \
       /var/log/lidlight.log /var/log/lidlight.log.1
 # 只删我们自己建的那个软链接。
 if [ -L /usr/local/bin/lidlight ] &&

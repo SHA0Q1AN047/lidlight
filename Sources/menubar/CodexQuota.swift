@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 struct QuotaWindow: Identifiable, Equatable {
     let id: String
@@ -21,13 +22,77 @@ enum CodexQuotaError: LocalizedError {
     }
 }
 
+struct QuotaRecoveryTracker: Codable {
+    struct Exhausted: Codable { let minutes: Int; let reset: Date }
+    private(set) var exhausted: [String: Exhausted] = [:]
+    private(set) var expected: [String: Int] = [:]
+    mutating func observe(_ windows: [QuotaWindow], now: Date = Date()) -> Bool {
+        // Never infer recovery from a reset clock or from a failed/partial response.
+        for window in windows { expected[window.id] = window.minutes }
+        let recovery = !exhausted.isEmpty && !windows.isEmpty
+            && expected.allSatisfy { id, minutes in windows.contains { $0.id == id && $0.minutes == minutes } }
+            && exhausted.allSatisfy { id, old in
+                windows.contains { $0.id == id && $0.minutes == old.minutes && $0.resetsAt >= old.reset && $0.resetsAt > now && $0.used < 100 }
+            } && windows.allSatisfy { $0.used < 100 && $0.resetsAt > now }
+        if recovery { exhausted.removeAll(); expected.removeAll() }
+        for window in windows where window.used >= 100 {
+            exhausted[window.id] = Exhausted(minutes: window.minutes,reset: window.resetsAt)
+        }
+        return recovery
+    }
+}
+
 final class CodexQuota: ObservableObject {
+    let history: QuotaHistory
+    private let defaults: UserDefaults
+    private var authorizationRequest: UInt64 = 0
+    private var recovery: QuotaRecoveryTracker
+    @Published private(set) var recoveryNotifications: Bool
+    @Published var notificationMessage: String?
+    init(history: QuotaHistory = QuotaHistory(), defaults: UserDefaults = .standard) {
+        self.history = history; self.defaults = defaults
+        enabled = defaults.object(forKey: "showCodexQuota") as? Bool ?? true
+        recoveryNotifications = defaults.bool(forKey: "quotaRecoveryNotifications")
+        recovery = defaults.data(forKey: "quotaRecoveryTracker").flatMap { try? JSONDecoder().decode(QuotaRecoveryTracker.self,from: $0) } ?? QuotaRecoveryTracker()
+    }
+    func setRecoveryNotifications(_ enabled: Bool) {
+        authorizationRequest &+= 1
+        let request = authorizationRequest
+        if !enabled {
+            recoveryNotifications = false; defaults.set(false,forKey: "quotaRecoveryNotifications")
+            recovery = QuotaRecoveryTracker(); defaults.removeObject(forKey: "quotaRecoveryTracker")
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            DispatchQueue.main.async {
+                guard let self, self.authorizationRequest == request else { return }
+                self.recoveryNotifications = granted
+                self.defaults.set(granted,forKey: "quotaRecoveryNotifications")
+                self.notificationMessage = granted ? nil : (error?.localizedDescription ?? "Allow Lidlight notifications in System Settings.")
+                if granted { self.refresh(force: true) }
+            }
+        }
+    }
+    func accept(_ windows: [QuotaWindow], now: Date = Date()) {
+        history.record(windows,now: now); self.windows = windows; updated = now; message = nil
+        guard recoveryNotifications else { return }
+        let recovered = recovery.observe(windows,now: now)
+        defaults.set(try? JSONEncoder().encode(recovery),forKey: "quotaRecoveryTracker")
+        guard recovered else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Lidlight · Codex quota is available"
+        content.body = "A fresh check confirms quota is available again. Open Lidlight to see your remaining limits."
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "quota-recovered",content: content,trigger: nil)) { [weak self] error in
+            if let error { DispatchQueue.main.async { self?.notificationMessage = error.localizedDescription } }
+        }
+    }
     @Published var windows: [QuotaWindow] = []
     @Published var updated: Date?
     @Published var busy = false
     @Published var message: String?
-    @Published var enabled = UserDefaults.standard.object(forKey: "showCodexQuota") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(enabled, forKey: "showCodexQuota"); if enabled { refresh(force: true) } }
+    @Published var enabled: Bool {
+        didSet { defaults.set(enabled, forKey: "showCodexQuota"); if enabled { refresh(force: true) } }
     }
     private var lastAttempt = Date.distantPast
     var summary: String {
@@ -45,7 +110,7 @@ final class CodexQuota: ObservableObject {
                 guard let self else { return }
                 self.busy = false
                 switch result {
-                case .success(let windows): self.windows = windows; self.updated = Date(); self.message = nil
+                case .success(let windows): if self.enabled { self.accept(windows) }
                 case .failure(let error): self.message = error.localizedDescription
                 }
             }
@@ -58,7 +123,7 @@ final class CodexQuota: ObservableObject {
         }
         let windows = ["primary", "secondary"].compactMap { key -> QuotaWindow? in
             guard let window = bucket[key] as? [String: Any],
-                  let used = (window["usedPercent"] as? NSNumber)?.doubleValue, used.isFinite,
+                  let used = (window["usedPercent"] as? NSNumber)?.doubleValue, used.isFinite, used >= 0,
                   let duration = (window["windowDurationMins"] as? NSNumber)?.intValue, duration > 0,
                   let reset = (window["resetsAt"] as? NSNumber)?.doubleValue, reset.isFinite, reset > 0 else { return nil }
             return QuotaWindow(id: key, used: used, minutes: duration, resetsAt: Date(timeIntervalSince1970: reset))
@@ -100,7 +165,7 @@ final class CodexQuota: ObservableObject {
             var data = try JSONSerialization.data(withJSONObject: message); data.append(10)
             try input.fileHandleForWriting.write(contentsOf: data)
         }
-        try send(["id": 0, "method": "initialize", "params": ["clientInfo": ["name": "lidlight", "title": "Lidlight", "version": "1.1.1"]]])
+        try send(["id": 0, "method": "initialize", "params": ["clientInfo": ["name": "lidlight", "title": "Lidlight", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"]]])
         var buffer = Data()
         while process.isRunning {
             let data = output.fileHandleForReading.availableData

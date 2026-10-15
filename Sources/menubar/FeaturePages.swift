@@ -2,26 +2,54 @@ import SwiftUI
 
 struct FeaturePages: View {
     @ObservedObject var features: Features
-    private let mint = Color(red: 0.48, green: 0.93, blue: 0.78)
+    @State private var eventName = ""
+    @State private var eventDate = Date()
+    @AppStorage("animateMenuCat") private var animateMenuCat = true
+    private let mint = LidlightPalette.iris
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(features.page.capitalized).font(.system(size: 28, weight: .semibold, design: .rounded))
-            if features.page == "sessions" { sessions }
-            if features.page == "rules" { rules }
-            if features.page == "settings" { settings }
-            if features.page == "activity" { activity }
+            if features.page == "countdown" { countdown.padding(16).lidlightCard() }
+            if features.page == "sessions" { sessions.padding(16).lidlightCard() }
+            if features.page == "rules" { rules.padding(16).lidlightCard() }
+            if features.page == "settings" { settings.padding(16).lidlightCard() }
+            if features.page == "activity" { activity.padding(16).lidlightCard() }
             if let message = features.message { Text(message).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true) }
-        }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+        }.buttonStyle(GlassActionStyle()).toggleStyle(SwitchToggleStyle(tint: mint)).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var countdown: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Count down to something that matters.").foregroundColor(.secondary)
+            TextField("Event name", text: $eventName).textFieldStyle(.roundedBorder)
+            DatePicker("Event date", selection: $eventDate, displayedComponents: .date)
+            if let draft = DayCountdown(name: eventName,date: eventDate) {
+                Text(draft.label()).font(.system(size: 17, weight: .semibold, design: .rounded)).fixedSize(horizontal: false, vertical: true)
+            }
+            Button("Save to menu bar") { features.saveCountdown(name: eventName,date: eventDate) }
+                .disabled(eventName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if let event = features.countdownEvent {
+                Divider()
+                Text("Showing: " + event.label()).foregroundColor(mint).fixedSize(horizontal: false, vertical: true)
+                Button("Remove countdown") { features.clearCountdown(); eventName = "" }.foregroundColor(.secondary)
+            }
+            Text("No saved event means no countdown in the menu bar. Updates at local midnight. Today shows Today; past dates show days ago. Long names are shortened in the menu bar; hover to see the full name.")
+                .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.onAppear {
+            eventName = features.countdownEvent?.name ?? ""
+            eventDate = features.countdownEvent?.targetDate() ?? Date()
+        }
     }
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 16) {
+            Button { features.page = "countdown" } label: { Label("Day countdown", systemImage: "calendar.badge.clock") }
+            Divider()
             Text(features.sessionText).foregroundColor(mint)
             HStack {
                 Button("Screen off") { features.blankScreen(lock: false) }
                 Button("Lock & run") { features.blankScreen(lock: true) }
                 Button("Restore light") { features.restore() }
             }
-            Text("Screen off uses macOS display sleep and may lock. Lock & run locks your session while keeping work active.").foregroundColor(.gray)
+            Text("Screen off uses macOS display sleep and may lock. Lock & run locks your session while keeping work active.").foregroundColor(.secondary)
             Divider()
             Text("Keep awake for").fontWeight(.semibold)
             HStack {
@@ -38,26 +66,26 @@ struct FeaturePages: View {
             Button("Start until selected time") { features.begin(until: features.until) }
             Divider()
             Button { features.oneShot() } label: { Label("One-shot awake", systemImage: "sparkles") }
-            Text("Ends on unplug or next login. Restores the previous mode.").foregroundColor(.gray)
+            Text("Ends on unplug or next login. Restores the previous mode.").foregroundColor(.secondary)
             Button { features.oneShot(presentation: true) } label: { Label("Start presentation", systemImage: "display") }
-            Text("Keeps the display awake too. End it here when finished.").foregroundColor(.gray)
+            Text("Keeps the display awake too. End it here when finished.").foregroundColor(.secondary)
             Divider()
             Text("Wait for a process").fontWeight(.semibold)
             HStack {
                 TextField("Process ID (PID)", text: $features.processInput)
                 Button("Wait") { features.watchProcess() }
             }
-            Text("Choose a process you own. Restores sleep mode when it exits, with a seven-day safety limit. Lidlight must stay open.").foregroundColor(.gray)
+            Text("Choose a process you own. Restores sleep mode when it exits, with a seven-day safety limit. Lidlight must stay open.").foregroundColor(.secondary)
             Button("End active session") { features.stopSession() }.foregroundColor(mint)
         }.textFieldStyle(.roundedBorder)
     }
     private var rules: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Manual Allow sleep pauses these rules. Choose Automatic to resume.").foregroundColor(.gray)
+            Text("Manual Allow sleep pauses these rules. Choose Automatic to resume.").foregroundColor(.secondary)
             Toggle("Awake when an external display is connected", isOn: preference(\.displayRule))
             Divider()
             Text("App rules").fontWeight(.semibold)
-            Text("Stay awake while any selected App is running.").foregroundColor(.gray)
+            Text("Stay awake while any selected App is running.").foregroundColor(.secondary)
             ForEach(features.preferences.apps) { app in
                 HStack { Text(app.name); Spacer(); Button { features.removeApp(app.id) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).accessibilityLabel("Remove " + app.name) }
             }
@@ -69,35 +97,41 @@ struct FeaturePages: View {
                 DatePicker("From", selection: scheduleTime(\.start), displayedComponents: .hourAndMinute)
                 DatePicker("To", selection: scheduleTime(\.end), displayedComponents: .hourAndMinute)
             }.disabled(!features.preferences.schedule)
-            Text("Equal start/end times disable the schedule. Uses local time; overnight ranges are supported. Outside the schedule your manual base mode returns. Lidlight must stay open.").foregroundColor(.gray)
+            Text("Equal start/end times disable the schedule. Uses local time; overnight ranges are supported. Outside the schedule your manual base mode returns. Lidlight must stay open.").foregroundColor(.secondary)
         }
     }
     private var settings: some View {
         VStack(alignment: .leading, spacing: 16) {
+            Button { features.page = "countdown" } label: { Label("Day countdown", systemImage: "calendar.badge.clock") }
+            Button { features.page = "performance" } label: { Label("Performance", systemImage: "waveform.path.ecg") }
+            Button { features.page = "updates" } label: { Label("Updates", systemImage: "arrow.down.circle") }
+            Divider()
             Toggle("Launch at login", isOn: Binding(get: { features.preferences.launchAtLogin }, set: features.setLogin))
             Toggle("Always return to Automatic on service restart", isOn: preference(\.startupAuto))
-            Text("When off, the last mode is restored after restarting.").foregroundColor(.gray)
+            Text("When off, the last mode is restored after restarting.").foregroundColor(.secondary)
             Divider()
             Toggle("Only stay awake on AC power", isOn: preference(\.acOnly))
             Picker("Battery protection", selection: preference(\.threshold)) {
                 ForEach([10, 15, 20, 25, 30, 40, 50], id: \.self) { Text("\($0)%").tag($0) }
             }
             Toggle("Low-battery notification", isOn: Binding(get: { features.preferences.notifications }, set: features.setNotifications))
-            Text("Warns five percentage points before protection. Permission is requested only when enabled.").foregroundColor(.gray)
+            Text("Warns five percentage points before protection. Permission is requested only when enabled.").foregroundColor(.secondary)
             Divider()
             Toggle("Global shortcut", isOn: preference(\.shortcut))
             Picker("Toggle awake / sleep", selection: preference(\.shortcutKey)) {
                 Text("⌘⌥L").tag(0); Text("⌘⌥⇧L").tag(1)
             }.disabled(!features.preferences.shortcut)
             Toggle("Show timer beside menu icon", isOn: preference(\.countdown))
+            Toggle("Animate menu cat", isOn: $animateMenuCat)
+            Text("CPU load sets its pace. Reduce Motion keeps the cat still.").font(.system(size: 10)).foregroundColor(.secondary)
             Divider()
-            Text(features.batteryText).foregroundColor(.gray)
-            Text("Measured as percentage-point drops while awake on battery, not energy or battery-life prediction.").font(.system(size: 10)).foregroundColor(.gray)
+            Text(features.batteryText).foregroundColor(.secondary)
+            Text("Measured as percentage-point drops while awake on battery, not energy or battery-life prediction.").font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
     private var activity: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("The latest 40 local events. Nothing is uploaded.").foregroundColor(.gray)
+            Text("The latest 40 local events. Nothing is uploaded.").foregroundColor(.secondary)
             if features.history.isEmpty { Text("No activity yet.") }
             ForEach(Array(features.history.enumerated()), id: \.offset) { _, event in Text(event).font(.system(size: 11, design: .monospaced)).fixedSize(horizontal: false, vertical: true) }
             Button("Clear local history") { features.clearHistory() }

@@ -11,7 +11,10 @@ cd "$(dirname "$0")/.."
 VERSION=${VERSION:-$(cat VERSION)}
 MIN_OS=12.0
 BUILD=build
-ROOT=$BUILD/root
+# Keep signing and packaging outside File Provider-managed Documents.
+STAGE=$(mktemp -d /private/tmp/lidlight-build.XXXXXX)
+trap 'rm -rf "$STAGE"' EXIT
+ROOT="$STAGE/root"
 APP=$ROOT/Applications/Lidlight.app
 DAEMON=$ROOT/Library/PrivilegedHelperTools/lidlightd
 PKG=$BUILD/Lidlight-$VERSION.pkg
@@ -27,7 +30,7 @@ compile() {
     local source=$1 output=$2 name
     name=$(basename "$output")
     for arch in arm64 x86_64; do
-        swiftc -O -target "$arch-apple-macos$MIN_OS" "$source"/*.swift Sources/Shared/*.swift -o "$BUILD/obj/$name-$arch"
+        swiftc -O -target "$arch-apple-macos$MIN_OS" "$source"/*.swift Sources/Shared/*.swift "$STAGE/BuildVersion.swift" -o "$BUILD/obj/$name-$arch"
     done
     lipo -create "$BUILD/obj/$name-arm64" "$BUILD/obj/$name-x86_64" -output "$output"
 }
@@ -37,6 +40,11 @@ rm -rf "$BUILD"
 mkdir -p "$BUILD/obj" "$APP/Contents/MacOS" "$APP/Contents/Resources" \
     "$(dirname "$DAEMON")" "$ROOT/Library/LaunchDaemons" "$ROOT/Library/LaunchAgents"
 
+# Embed the running daemon version, independent of files replaced during an upgrade.
+python3 - "$VERSION" "$STAGE/BuildVersion.swift" <<'PYVERSION'
+import json,sys
+with open(sys.argv[2], 'w') as f: f.write('enum BuildVersion { static let current = ' + json.dumps(sys.argv[1]) + ' }\n')
+PYVERSION
 compile Sources/daemon "$DAEMON"
 compile Sources/menubar "$APP/Contents/MacOS/Lidlight"
 
@@ -60,6 +68,7 @@ fi
 "${SIGN[@]}" "$APP"
 
 echo "==> 打包"
+codesign --verify --deep --strict "$ROOT/Applications/Lidlight.app"
 # 不关掉 relocatable 的话，安装器会把应用装到它在磁盘上找到的同名副本那里。
 pkgbuild --analyze --root "$ROOT" "$BUILD/component.plist" >/dev/null
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$BUILD/component.plist"
@@ -87,6 +96,10 @@ if [ -n "$PKG_IDENTITY" ] && [ -n "$NOTARY_PROFILE" ]; then
     xcrun notarytool submit "$PKG" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$PKG"
 fi
+
+# Keep a convenience payload for local diagnostics and daemon tests.
+ditto --noextattr --norsrc --noqtn "$ROOT" "$BUILD/root"
+xattr -cr "$BUILD/root"
 
 # Keep a stable asset name for the Releases download.
 cp "$PKG" "$BUILD/Lidlight.pkg"

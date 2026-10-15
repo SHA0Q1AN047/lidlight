@@ -10,6 +10,10 @@ import Foundation
         precondition(selected[0].label == "Weekly quota")
         do { _ = try CodexQuota.parse([:]); preconditionFailure("Missing quota must not become zero usage") } catch {}
         do { _ = try CodexQuota.parse(["rateLimits": ["primary": NSNull()]]); preconditionFailure("Null quota must be unavailable") } catch {}
+        do {
+            _ = try CodexQuota.parse(["rateLimits": ["primary": ["usedPercent": -1,"windowDurationMins": 300,"resetsAt": 2000000000]]])
+            preconditionFailure("Negative usage must not claim full quota or trigger recovery")
+        } catch {}
         print("PASS: remaining percentages, multi-bucket priority, dynamic windows and missing quota")
         if CommandLine.arguments.contains("--live") {
             for window in try CodexQuota.fetch() { print("\(window.label): \(window.remaining)% remaining") }
