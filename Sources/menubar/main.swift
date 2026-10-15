@@ -176,6 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let button = statusItem.button else { return }
         if popover.isShown { popover.close() } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.isOpaque = false
+            popover.contentViewController?.view.window?.backgroundColor = .clear
             refresh()
             monitor.refresh(visible: !dashboard.details && ["home", "performance"].contains(features.page), includeProcesses: features.page == "performance")
         }

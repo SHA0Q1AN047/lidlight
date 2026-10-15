@@ -14,7 +14,9 @@ struct PerformanceSummary: View {
             HStack(spacing: 8) {
                 metric("System power", color: LidlightPalette.iris, path: { $0.watts }, value: sample?.watts.map { String(format: "%.1f W", $0) } ?? "—")
                 metric("CPU hottest", color: LidlightPalette.peach, path: { $0.cpuCelsius }, value: sample?.cpuCelsius.map { String(format: "%.1f°C", $0) } ?? "—")
-                metric(sample?.fanCount == 0 ? "Fanless" : "Fans · max RPM", color: LidlightPalette.mist, path: { $0.fans.compactMap(\.rpm).max() }, value: sample?.fanCount == 0 ? "No fan" : sample?.fans.compactMap(\.rpm).max().map { String(format: "%.0f", $0) } ?? "—")
+                if monitor.hasFans != false {
+                    metric("Fans · max RPM", color: LidlightPalette.mist, path: { $0.fans.compactMap(\.rpm).max() }, value: sample?.fans.compactMap(\.rpm).max().map { String(format: "%.0f", $0) } ?? "—")
+                }
             }
             Text("Last 2 min · While panel is open").font(.system(size: 8)).foregroundColor(.secondary)
         }.contentShape(Rectangle())
@@ -50,7 +52,7 @@ struct PerformanceView: View {
                 card("System power", value: current?.watts, unit: "W", icon: "bolt.fill", color: LidlightPalette.iris, path: \.watts,
                      note: "System sensor reading")
                 card("CPU temp", value: current?.cpuCelsius, unit: "°C", icon: "thermometer", color: LidlightPalette.peach, path: \.cpuCelsius,
-                     note: "Hottest CPU sensor")
+                     note: current?.cpuKey?.hasPrefix("HID: ") == true ? "CPU thermal service" : "Hottest CPU sensor")
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Top CPU processes").font(.system(size: 13, weight: .semibold))
@@ -67,11 +69,10 @@ struct PerformanceView: View {
                 }
                 Text("Readable processes only · 100% = one CPU core. Samples only while this page is open; process names stay on your Mac.").font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }.padding(16).lidlightCard()
+            if monitor.hasFans != false {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Fans", systemImage: "fanblades").font(.system(size: 13, weight: .semibold))
-                if current?.fanCount == 0 {
-                    Text("No fan installed").font(.system(size: 20, weight: .semibold, design: .rounded))
-                } else if let fans = current?.fans, !fans.isEmpty {
+                if let fans = current?.fans, !fans.isEmpty {
                     ForEach(fans) { fan in
                         HStack {
                             Text("Fan \(fan.index + 1)")
@@ -84,6 +85,7 @@ struct PerformanceView: View {
                 } else { Text("Fan readings unavailable").font(.system(size: 12)).foregroundColor(.secondary) }
                 Text("Monitoring only. macOS continues to control fan speeds.").font(.system(size: 10)).foregroundColor(.secondary)
             }.padding(16).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).lidlightCard()
+            }
             Text("System watts are device-reported, not a wall-outlet measurement. Charts keep up to two minutes while this panel is open. Closing the panel pauses sampling. Sensor support varies by Mac; unavailable readings are never shown as zero.")
                 .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             if let date = current?.date {

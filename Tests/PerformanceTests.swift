@@ -31,6 +31,17 @@ import Foundation
         expect(sample.cpuCelsius == nil && sample.watts == 12,"Low SMC artifacts never become a CPU temperature or chart point")
         values["T001"] = 45
         expect(collect().cpuCelsius == 45,"A valid temperature immediately recovers")
+        expect(HardwareSensors.isKnownFanless(model: "MacBookAir10,1"), "M1 Air hides fans even if SMC is unavailable")
+        expect(!HardwareSensors.isKnownFanless(model: "MacBookPro17,1"), "M1 Pro laptop is not mistaken for a fanless Air")
+        expect(!HardwareSensors.isKnownFanless(model: "Unknown"), "Unknown model never implies no fan")
+        expect(CPUThermalHID.isCPUSensor("pACC MTR Temp Sensor0") && CPUThermalHID.isCPUSensor("eACC MTR Temp Sensor1"), "Accept CPU thermal channels")
+        expect(!CPUThermalHID.isCPUSensor("GPU MTR Temp Sensor") && !CPUThermalHID.isCPUSensor("Battery") && !CPUThermalHID.isCPUSensor("PMU tdie"), "Do not mislabel GPU, battery or ambiguous die temperatures as CPU")
+        let missing = SensorSample(date: now,watts: nil,cpuCelsius: nil,cpuKey: nil,fans: [],fanCount: nil)
+        let recovered = HardwareSensors.resolved(missing,fallback: ("HID: pACC MTR Temp Sensor0",52.5),fanless: true)
+        expect(recovered.cpuCelsius == 52.5 && recovered.fanCount == 0 && recovered.fans.isEmpty, "M1 HID fallback works independently of SMC and fan count")
+        expect(HardwareSensors.resolved(recovered,fallback: ("HID: other",60),fanless: false).cpuCelsius == 52.5, "Primary temperature wins over fallback")
+        expect(HardwareSensors.resolved(missing,fallback: ("HID: cpu",6.7),fanless: false).cpuCelsius == nil, "Invalid fallback remains unavailable")
+        expect(HardwareSensors.resolved(missing,fallback: nil,fanless: false).fanCount == nil, "Failed fan read never becomes fanless")
         expect(HardwareSensors.cpuKeys(brand: "Apple M2 Pro").contains("Tp1h"), "M2 CPU thermal zone")
         expect(HardwareSensors.cpuKeys(brand: "Apple M99").isEmpty, "Unknown silicon does not guess CPU temperature")
         expect(PerformanceMonitor.isFresh(sample, now: now), "Fresh sample")
@@ -46,6 +57,16 @@ import Foundation
         expect(monitor.sample != nil && monitor.history.count == 1, "Background sample delivered to UI")
         monitor.refresh(visible: true, now: now.addingTimeInterval(1))
         expect(!monitor.busy && monitor.history.count == 1, "Sampling interval enforced")
+        expect(monitor.hasFans == false,"A confirmed fanless device hides fan UI")
+        var topologySample = SensorSample(date: now,watts: 10,cpuCelsius: 45,cpuKey: "test",fans: [FanReading(index: 0,rpm: 0)],fanCount: 1)
+        let topology = PerformanceMonitor(readSample: { topologySample })
+        topology.refresh(visible: true,now: now)
+        for _ in 0..<200 { if !topology.busy { break }; try? await Task.sleep(nanoseconds: 1_000_000) }
+        expect(topology.hasFans == true,"Stopped physical fan remains visible")
+        topologySample = missing
+        topology.refresh(visible: true,now: now.addingTimeInterval(3))
+        for _ in 0..<200 { if !topology.busy { break }; try? await Task.sleep(nanoseconds: 1_000_000) }
+        expect(topology.hasFans == true,"A failed subsequent read does not hide installed fans")
         var sequence = 0
         let bounded = PerformanceMonitor(readSample: {
             sequence += 1

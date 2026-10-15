@@ -6,6 +6,10 @@ final class HardwareSensors {
     private var connection: io_connect_t = 0
     private var metadata: [String: (Int, String)] = [:]
     private var temperatureKeys: [String]?
+    private let brand = HardwareSensors.cpuBrand()
+    private let fanless = HardwareSensors.isKnownFanless(model: HardwareSensors.modelIdentifier())
+    private var hid: CPUThermalHID?
+    private var lastHIDAttempt = -Double.infinity
     init() {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         guard service != 0 else { return }
@@ -67,12 +71,23 @@ final class HardwareSensors {
     }
     static func cpuKeys(brand: String) -> [String] {
         if brand.contains("Apple M1") { return ["Tp09","Tp0T","Tp01","Tp05","Tp0D","Tp0H","Tp0L","Tp0P","Tp0X","Tp0b"] }
-        if brand.contains("Apple M2") { return ["Tp1h","Tp1t","Tp1p","Tp1l"] }
+        if brand.contains("Apple M2") { return ["Tp1h","Tp1t","Tp1p","Tp1l","Tp01","Tp05","Tp09","Tp0D","Tp0X","Tp0b","Tp0f","Tp0j"] }
         if brand.contains("Apple M3") { return ["Te05","Te0L","Te0P","Te0S","Tf04","Tf09","Tf0A","Tf0B","Tf0D","Tf0E","Tf44","Tf49","Tf4A","Tf4B","Tf4D","Tf4E"] }
         if brand.contains("Apple M4") { return ["Te05","Te0S","Te09","Te0H","Tp01","Tp05","Tp09","Tp0D","Tp0V","Tp0Y","Tp0b","Tp0e"] }
-        if brand.contains("Apple M5") { return ["Tp00","Tp04","Tp08","Tp0C","Tp0G","Tp0K","Tp01","Tp0R","Tp0U","Tp0X","Tp0a","Tp0d","Tp0g","Tp0j","Tp0m","Tp0p","Tp0u","Tp0y"] }
-        if brand.contains("Intel") { return ["TCAD","TC0D","TC0E","TC0F"] }
+        if brand.contains("Apple M5") { return ["Tp00","Tp04","Tp08","Tp0C","Tp0G","Tp0K","Tp0O","Tp0R","Tp0U","Tp0X","Tp0a","Tp0d","Tp0g","Tp0j","Tp0m","Tp0p","Tp0u","Tp0y"] }
+        if brand.contains("Intel") { return ["TCAD","TC0D","TC0E","TC0F","TC0P","TC0H"] }
         return [] // Unknown silicon: do not label arbitrary temperature sensors as CPU.
+    }
+    static func validTemperature(_ value: Double) -> Bool { value.isFinite && value >= 10 && value < 130 }
+    static func isKnownFanless(model: String) -> Bool {
+        ["MacBookAir10,1", "Mac14,2", "Mac14,15", "Mac15,12", "Mac15,13", "Mac16,12", "Mac16,13", "Mac17,3", "Mac17,4"].contains(model)
+    }
+    static func modelIdentifier() -> String {
+        var count = 0
+        guard sysctlbyname("hw.model",nil,&count,nil,0) == 0, count > 0, count < 1024 else { return "Unknown" }
+        var bytes = [CChar](repeating: 0,count: count)
+        guard sysctlbyname("hw.model",&bytes,&count,nil,0) == 0 else { return "Unknown" }
+        return String(cString: bytes)
     }
     static func cpuBrand() -> String {
         var count = 0
@@ -83,14 +98,25 @@ final class HardwareSensors {
     }
     func sample() -> SensorSample {
         let now = Date()
-        guard connected else { return SensorSample(date: now, watts: nil, cpuCelsius: nil, cpuKey: nil, fans: [], fanCount: nil) }
-        // Cache candidate names, never availability: sleeping channels must be retried next sample.
-        if temperatureKeys == nil { temperatureKeys = Self.cpuKeys(brand: Self.cpuBrand()) }
-        return Self.collect(now: now, keys: temperatureKeys ?? [], read: read)
+        if temperatureKeys == nil { temperatureKeys = Self.cpuKeys(brand: brand) }
+        let primary = Self.collect(now: now, keys: temperatureKeys ?? [], read: read)
+        // Keep valid SMC readings primary. M1 can also expose CPU thermal services through HID.
+        var fallback: (key: String, celsius: Double)?
+        if primary.cpuCelsius == nil && brand.hasPrefix("Apple M1") {
+            let uptime = ProcessInfo.processInfo.systemUptime
+            if hid == nil && uptime-lastHIDAttempt >= 60 { lastHIDAttempt = uptime; hid = CPUThermalHID() }
+            fallback = hid?.read()
+        }
+        return Self.resolved(primary, fallback: fallback, fanless: fanless)
+    }
+    static func resolved(_ primary: SensorSample, fallback: (key: String, celsius: Double)?, fanless: Bool) -> SensorSample {
+        let alternate = fallback.flatMap { validTemperature($0.celsius) ? $0 : nil }
+        return SensorSample(date: primary.date,watts: primary.watts,cpuCelsius: primary.cpuCelsius ?? alternate?.celsius,cpuKey: primary.cpuKey ?? alternate?.key,
+            fans: fanless ? [] : primary.fans,fanCount: fanless ? 0 : primary.fanCount)
     }
     static func collect(now: Date, keys: [String], read: (String) -> Double?) -> SensorSample {
         let temperatures = keys.compactMap { key -> (String,Double)? in
-            guard let value = read(key), value.isFinite, value >= 10, value < 130 else { return nil }; return (key,value)
+            guard let value = read(key), Self.validTemperature(value) else { return nil }; return (key,value)
         }
         let hottest = temperatures.max { $0.1 < $1.1 }
         let power = read("PSTR").flatMap { $0.isFinite && $0 > 0 && $0 < 2000 ? $0 : nil }
@@ -115,4 +141,52 @@ struct SensorSample: Equatable {
     let fans: [FanReading]
     let fanCount: Int?
     var hasReadings: Bool { watts != nil || cpuCelsius != nil || fans.contains { $0.rpm != nil } || fanCount == 0 }
+}
+
+/// Optional, read-only CPU thermal service fallback. No input-event subscription or keyboard access.
+final class CPUThermalHID {
+    private typealias Create = @convention(c) (CFAllocator?) -> Unmanaged<CFTypeRef>?
+    private typealias Match = @convention(c) (CFTypeRef, CFDictionary) -> Void
+    private typealias Services = @convention(c) (CFTypeRef) -> Unmanaged<CFArray>?
+    private typealias Property = @convention(c) (CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
+    private typealias Event = @convention(c) (CFTypeRef, Int64, Int32, Int64) -> Unmanaged<CFTypeRef>?
+    private typealias Value = @convention(c) (CFTypeRef, Int32) -> Double
+    private let library: UnsafeMutableRawPointer
+    private let client: CFTypeRef
+    private let services: Services
+    private let property: Property
+    private let event: Event
+    private let value: Value
+    init?() {
+        guard let library = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit",RTLD_LAZY | RTLD_LOCAL) else { return nil }
+        guard let create = dlsym(library,"IOHIDEventSystemClientCreate"),
+              let matching = dlsym(library,"IOHIDEventSystemClientSetMatching"),
+              let services = dlsym(library,"IOHIDEventSystemClientCopyServices"),
+              let property = dlsym(library,"IOHIDServiceClientCopyProperty"),
+              let event = dlsym(library,"IOHIDServiceClientCopyEvent"),
+              let value = dlsym(library,"IOHIDEventGetFloatValue"),
+              let client = unsafeBitCast(create,to: Create.self)(kCFAllocatorDefault)?.takeRetainedValue() else { dlclose(library); return nil }
+        self.library = library; self.client = client
+        self.services = unsafeBitCast(services,to: Services.self)
+        self.property = unsafeBitCast(property,to: Property.self)
+        self.event = unsafeBitCast(event,to: Event.self)
+        self.value = unsafeBitCast(value,to: Value.self)
+        unsafeBitCast(matching,to: Match.self)(client,["PrimaryUsagePage": 0xff00,"PrimaryUsage": 5] as CFDictionary)
+    }
+    deinit { dlclose(library) }
+    static func isCPUSensor(_ name: String) -> Bool {
+        name.hasPrefix("pACC MTR Temp Sensor") || name.hasPrefix("eACC MTR Temp Sensor")
+    }
+    func read() -> (key: String, celsius: Double)? {
+        guard let list = services(client)?.takeRetainedValue() else { return nil }
+        var hottest: (String,Double)?
+        for service in list as [AnyObject] {
+            guard let name = property(service,"Product" as CFString)?.takeRetainedValue() as? String,
+                  Self.isCPUSensor(name), let sample = event(service,15,0,0)?.takeRetainedValue() else { continue }
+            let temperature = value(sample,15 << 16)
+            guard HardwareSensors.validTemperature(temperature) else { continue }
+            if temperature > (hottest?.1 ?? -.infinity) { hottest = (name,temperature) }
+        }
+        return hottest.map { ("HID: " + $0.0,$0.1) }
+    }
 }

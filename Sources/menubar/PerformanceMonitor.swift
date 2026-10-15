@@ -3,6 +3,7 @@ import Foundation
 final class PerformanceMonitor: ObservableObject {
     @Published private(set) var sample: SensorSample?
     @Published private(set) var history: [SensorSample] = []
+    @Published private(set) var hasFans: Bool? = HardwareSensors.isKnownFanless(model: HardwareSensors.modelIdentifier()) ? false : nil
     @Published private(set) var busy = false
     @Published private(set) var topProcesses: [ProcessCPUReading] = []
     @Published private(set) var processesUpdated: Date?
@@ -39,6 +40,8 @@ final class PerformanceMonitor: ObservableObject {
             DispatchQueue.main.async {
                 self.topProcesses = self.processesActive && includeProcesses ? top : []
                 self.processesUpdated = self.processesActive && includeProcesses ? result.date : nil
+                if let count = result.fanCount, count > 0 { self.hasFans = true }
+                else if result.fanCount == 0 && self.hasFans != true { self.hasFans = false }
                 self.sample = result
                 // Clock corrections must not retain future points or join unrelated traces.
                 self.history = self.history.filter { $0.date <= result.date && result.date.timeIntervalSince($0.date) <= 120 }

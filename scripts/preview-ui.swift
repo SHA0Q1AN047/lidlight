@@ -58,14 +58,14 @@ private final class PreviewReleaseProtocol: URLProtocol {
         app.appearance = NSAppearance(named: CommandLine.arguments.contains("--dark") ? .darkAqua : .aqua)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [PreviewReleaseProtocol.self]
-        let updater = AppUpdater(currentVersion: "1.9.2", defaults: UserDefaults(suiteName: "com.lidlight.preview.updater")!, session: URLSession(configuration: configuration), openInstaller: { _ in false })
+        let updater = AppUpdater(currentVersion: "1.9.3", defaults: UserDefaults(suiteName: "com.lidlight.preview.updater")!, session: URLSession(configuration: configuration), openInstaller: { _ in false })
         if CommandLine.arguments.contains("--available") { updater.check(force: true) }
         let monitor = CommandLine.arguments.contains("--live-performance") ? PerformanceMonitor() : PerformanceMonitor(readSample: {
-            SensorSample(date: Date(), watts: 18.4, cpuCelsius: CommandLine.arguments.contains("--wide-values") ? 108.8 : 48.2, cpuKey: "Sample", fans: [FanReading(index: 0, rpm: 2320), FanReading(index: 1, rpm: 2340)], fanCount: 2)
+            SensorSample(date: Date(), watts: 18.4, cpuCelsius: CommandLine.arguments.contains("--wide-values") ? 108.8 : 48.2, cpuKey: "Sample", fans: CommandLine.arguments.contains("--fanless") ? [] : [FanReading(index: 0, rpm: 2320), FanReading(index: 1, rpm: 2340)], fanCount: CommandLine.arguments.contains("--fanless") ? 0 : 2)
         })
         monitor.refresh(visible: true, includeProcesses: features.page == "performance")
-        let verification = InstallVerification(runningVersion: "1.9.2",defaults: UserDefaults(suiteName: "com.lidlight.preview.install")!)
-        verification.apply(InstallStatus(running: "1.9.2",installed: "1.9.2",service: "1.9.2",serviceRunning: true))
+        let verification = InstallVerification(runningVersion: "1.9.3",defaults: UserDefaults(suiteName: "com.lidlight.preview.install")!)
+        verification.apply(InstallStatus(running: "1.9.3",installed: "1.9.3",service: "1.9.3",serviceRunning: true))
         let view = NSHostingView(rootView: Dashboard(state: state, features: features, quota: quota, updater: updater, monitor: monitor, verification: verification, select: { _ in }, toggleDim: {}, copyDiagnostics: {}, quit: {}).environment(\.lidlightOpaquePreview, CommandLine.arguments.contains("--opaque")))
         view.frame = NSRect(origin: .zero, size: view.fittingSize)
         let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)

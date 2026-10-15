@@ -42,7 +42,7 @@ private struct GlassControl: ViewModifier {
                     .overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(selected ? 0.18 : 0.055)))
             }
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(.clear.tint(selected ? LidlightPalette.iris.opacity(0.22) : LidlightPalette.iris.opacity(0.035)).interactive(), in: RoundedRectangle(cornerRadius: radius))
+            content.glassEffect(.clear.tint(selected ? LidlightPalette.iris.opacity(0.16) : nil).interactive(), in: RoundedRectangle(cornerRadius: radius))
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius))
         }
@@ -53,23 +53,27 @@ private struct ContentSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.lidlightOpaquePreview) private var opaquePreview
     let radius: CGFloat
-    func body(content: Content) -> some View {
-        content.background {
-            if reduceTransparency || opaquePreview {
-                RoundedRectangle(cornerRadius: radius).fill(Color(nsColor: .controlBackgroundColor)).overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(0.055)))
-            } else {
-                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial)
-                    .overlay(RoundedRectangle(cornerRadius: radius).fill(LinearGradient(colors: [LidlightPalette.iris.opacity(0.07), LidlightPalette.mist.opacity(0.025), LidlightPalette.peach.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduceTransparency || opaquePreview {
+            content.background {
+                RoundedRectangle(cornerRadius: radius).fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(0.035)))
             }
+        } else if #available(macOS 26.0, *) {
+            content.glassEffect(.clear.tint(LidlightPalette.iris.opacity(0.015)),in: RoundedRectangle(cornerRadius: radius))
+        } else {
+            content.background {
+                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial).opacity(0.55)
+            }.overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(0.14),lineWidth: 0.5))
         }
-        .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(LinearGradient(colors: [.white.opacity(0.24), LidlightPalette.iris.opacity(0.10), .white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.6))
     }
 }
 
 struct PanelMaterial: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .underWindowBackground
+        view.material = .sidebar
+        view.alphaValue = 0.72
         view.blendingMode = .behindWindow
         view.state = .active
         return view
@@ -83,7 +87,7 @@ struct PanelBackdrop: View {
         ZStack {
             if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
             else { PanelMaterial() }
-            LinearGradient(colors: [LidlightPalette.iris.opacity(0.08), LidlightPalette.mist.opacity(0.025), LidlightPalette.peach.opacity(0.065)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [LidlightPalette.iris.opacity(0.035), LidlightPalette.mist.opacity(0.015), LidlightPalette.peach.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
     }
 }
