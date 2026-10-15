@@ -126,7 +126,7 @@ private final class UpdateRedirectPolicy: NSObject, URLSessionTaskDelegate {
         self.session = session ?? URLSession(configuration: configuration, delegate: UpdateRedirectPolicy(), delegateQueue: nil)
     }
     func check(force: Bool = false) {
-        guard !checking, !downloading, force || (automatic && Date().timeIntervalSince(lastAttempt) >= 6 * 3600) else { return }
+        guard !checking, !downloading, force || (automatic && (Date() < lastAttempt || Date().timeIntervalSince(lastAttempt) >= 6 * 3600)) else { return }
         checking = true; message = nil; lastAttempt = Date()
         defaults.set(lastAttempt, forKey: "lastUpdateAttempt")
         let includePreviews = previews
@@ -155,13 +155,18 @@ private final class UpdateRedirectPolicy: NSObject, URLSessionTaskDelegate {
         guard release.hasDigest else { message = UpdateError.missingDigest.localizedDescription; return }
         downloading = true; message = "Downloading \(release.tag)…"
         Task {
-            defer { downloading = false }
+            defer {
+                downloading = false
+                if available == nil { check(force: true) }
+            }
             do {
                 var request = URLRequest(url: release.url)
                 request.setValue("Lidlight/\(currentVersion)", forHTTPHeaderField: "User-Agent")
                 let (data, response) = try await session.data(for: request)
                 try Self.validate(response)
                 try release.verify(data)
+                // A channel change invalidates the captured release, even if switched back.
+                guard available == release else { return }
                 let cache = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 let directory = cache.appendingPathComponent("com.lidlight.updates/\(UUID().uuidString)", isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

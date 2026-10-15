@@ -5,7 +5,13 @@ final class MockUpdateProtocol: URLProtocol {
     static var respond: (URLRequest) -> (Int, Data) = { _ in (500, Data()) }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    static var holdDownloads = false
+    static var held: MockUpdateProtocol?
     override func startLoading() {
+        if Self.holdDownloads && request.url?.host != "api.github.com" { Self.held = self; return }
+        deliver()
+    }
+    func deliver() {
         let (code, data) = Self.respond(request)
         let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: "HTTP/1.1", headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -94,6 +100,26 @@ final class MockUpdateProtocol: URLProtocol {
         updater.automatic = false
         updater.check()
         expect(!updater.checking, "Automatic checks respect opt-out")
+        MockUpdateProtocol.respond = { request in
+            (200, request.url!.host == "api.github.com" ? feed([entry("v3.0.0",preview: true),entry("v2.0.0")]) : package)
+        }
+        updater.previews = true
+        await settle { !updater.checking }
+        expect(updater.available?.tag == "v3.0.0", "Preview selected for race test")
+        MockUpdateProtocol.holdDownloads = true
+        updater.downloadAndInstall()
+        await settle { MockUpdateProtocol.held != nil }
+        updater.previews = false
+        MockUpdateProtocol.holdDownloads = false
+        MockUpdateProtocol.held!.deliver(); MockUpdateProtocol.held = nil
+        await settle { !updater.downloading && !updater.checking && updater.available?.tag == "v2.0.0" }
+        expect(opened == nil,"Changing channel during download must never launch the old-channel installer")
+        defaults.set(true,forKey: "automaticUpdateChecks")
+        defaults.set(Date().addingTimeInterval(86400),forKey: "lastUpdateAttempt")
+        let corrected = AppUpdater(currentVersion: "1.0.0",defaults: defaults,session: session,openInstaller: { _ in false })
+        corrected.check()
+        expect(corrected.checking,"A future stored timestamp cannot freeze automatic checks after clock correction")
+        await settle { !corrected.checking }
         if CommandLine.arguments.contains("--live") {
             defaults.set(true, forKey: "previewUpdates")
             var downloaded: URL?

@@ -7,14 +7,24 @@ final class PerformanceMonitor: ObservableObject {
     @Published private(set) var topProcesses: [ProcessCPUReading] = []
     @Published private(set) var processesUpdated: Date?
     private let processes = ProcessCPUReader()
+    private var processesActive = false
     private var lastAttempt = Date.distantPast
     private let queue = DispatchQueue(label: "com.lidlight.sensors", qos: .utility)
     private var reader: HardwareSensors? // Accessed only on queue.
     private let readSample: (() -> SensorSample)?
     init(readSample: (() -> SensorSample)? = nil) { self.readSample = readSample }
     func refresh(visible: Bool, now: Date = Date(), includeProcesses: Bool = false) {
-        guard visible, !busy, now.timeIntervalSince(lastAttempt) >= 2 else { return }
+        if !visible || !includeProcesses {
+            if processesActive {
+                processesActive = false
+                queue.async { [weak self] in self?.processes.reset() }
+            }
+            if !topProcesses.isEmpty { topProcesses = [] }
+            if processesUpdated != nil { processesUpdated = nil }
+        }
+        guard visible, !busy, (now < lastAttempt || now.timeIntervalSince(lastAttempt) >= 2) else { return }
         lastAttempt = now; busy = true
+        processesActive = includeProcesses
         queue.async { [weak self] in
             guard let self else { return }
             let result: SensorSample
@@ -27,11 +37,13 @@ final class PerformanceMonitor: ObservableObject {
             if includeProcesses { top = self.processes.sample() }
             else { self.processes.reset(); top = [] }
             DispatchQueue.main.async {
-                self.topProcesses = top
-                self.processesUpdated = includeProcesses ? result.date : nil
+                self.topProcesses = self.processesActive && includeProcesses ? top : []
+                self.processesUpdated = self.processesActive && includeProcesses ? result.date : nil
                 self.sample = result
+                // Clock corrections must not retain future points or join unrelated traces.
+                self.history = self.history.filter { $0.date <= result.date && result.date.timeIntervalSince($0.date) <= 120 }
                 self.history.append(result)
-                self.history = Array(self.history.filter { result.date.timeIntervalSince($0.date) <= 120 }.suffix(60))
+                self.history = Array(self.history.suffix(60))
                 self.busy = false
             }
         }

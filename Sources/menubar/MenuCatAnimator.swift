@@ -23,7 +23,7 @@ final class MenuCatAnimator {
                 let tick = Timer(timeInterval: 1 / speed, repeats: true) { [weak self] _ in
                     guard let self else { return }
                     self.frame = (self.frame + 1) % MenuBarIcon.frameCount
-                    self.render()
+                    self.renderFrame()
                 }
                 tick.tolerance = min(0.02, 0.1 / speed)
                 RunLoop.main.add(tick, forMode: .common)
@@ -35,10 +35,14 @@ final class MenuCatAnimator {
     func setStatus(_ value: String, lowBattery: Bool) { status = value; warning = lowBattery; render() }
     func updateThermal(high: Bool, now: Date = Date()) { thermal.update(high: high, now: now); render() }
     func pause() { update(usage: nil, enabled: false, reduceMotion: true) }
-    private func render() {
+    private func renderFrame() {
         guard let button else { return }
         let image = MenuBarIcon.cat(frame: frame, lowBattery: warning, sweating: thermal.sweating)
         if button.image !== image { button.image = image }
+    }
+    private func render() {
+        renderFrame()
+        guard let button else { return }
         let gait = !isAnimating ? "Still" : (usage ?? 0) <= 0.1 ? "Walking" : "Running"
         let tooltip = status + " · " + gait + (thermal.sweating ? " · Sweating: sustained high thermal pressure" : "") + (usage.map { String(format: " · CPU %.0f%%", $0 * 100) } ?? " · CPU unavailable")
         if button.toolTip != tooltip {

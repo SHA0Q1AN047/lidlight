@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; if !self.displaysSleeping { self.quota.refresh(); Task { @MainActor in self.updater.check() } }; self.refresh() }
         lidTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.monitor.refresh(visible: self?.popover.isShown == true && self?.displaysSleeping == false, includeProcesses: self?.features.page == "performance")
+            self?.monitor.refresh(visible: self?.popover.isShown == true && self?.displaysSleeping == false && self?.dashboard.details == false && ["home", "performance"].contains(self?.features.page ?? ""), includeProcesses: self?.features.page == "performance")
             if let self {
                 let animate = UserDefaults.standard.object(forKey: "animateMenuCat") as? Bool ?? true
                 let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if popover.isShown { popover.close() } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             refresh()
-            monitor.refresh(visible: true)
+            monitor.refresh(visible: !dashboard.details && ["home", "performance"].contains(features.page), includeProcesses: features.page == "performance")
         }
     }
 
@@ -195,7 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func refresh() {
         let event = features.countdownEvent?.label(compact: true) ?? ""
         let timer = features.preferences.countdown ? features.countdownText : ""
-        statusItem.button?.title = [event,timer].filter { !$0.isEmpty }.joined(separator: " · ")
+        let title = [event,timer].filter { !$0.isEmpty }.joined(separator: " · ")
+        if statusItem.button?.title != title { statusItem.button?.title = title }
         let eventDetail = features.countdownEvent?.label() ?? ""
         menuCat.setStatus("Lidlight · " + features.reason + (eventDetail.isEmpty ? "" : " · " + eventDetail) + (features.countdownText.isEmpty ? "" : " · " + features.countdownText), lowBattery: features.low)
         // Hidden panels do not need process scans or power-source snapshots.

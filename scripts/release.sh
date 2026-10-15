@@ -44,6 +44,8 @@ swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Tests
 "$RELEASE_TEMP/quota-tests"
 swiftc Sources/menubar/Features.swift Sources/menubar/PowerSupply.swift Sources/menubar/DayCountdown.swift Sources/Shared/PowerPolicy.swift Tests/FeatureStateTests.swift -o "$RELEASE_TEMP/feature-tests"
 "$RELEASE_TEMP/feature-tests"
+swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sources/menubar/Features.swift Sources/menubar/PowerSupply.swift Sources/menubar/DayCountdown.swift Sources/Shared/PowerPolicy.swift Sources/menubar/ProcessCPU.swift Sources/menubar/PerformanceMonitor.swift Sources/menubar/HardwareSensors.swift Tests/AuditRegressionTests.swift -o "$RELEASE_TEMP/audit-tests"
+"$RELEASE_TEMP/audit-tests"
 bash scripts/build.sh
 python3 Tests/DaemonFeatureTests.py
 python3 Tests/UninstallTests.py

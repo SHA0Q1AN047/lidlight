@@ -28,6 +28,10 @@ struct QuotaRecoveryTracker: Codable {
     private(set) var expected: [String: Int] = [:]
     mutating func observe(_ windows: [QuotaWindow], now: Date = Date()) -> Bool {
         // Never infer recovery from a reset clock or from a failed/partial response.
+        if windows.contains(where: { window in expected[window.id].map { $0 != window.minutes } ?? false }) {
+            // Changed quota windows invalidate old exhaustion evidence (for example after a plan change).
+            exhausted.removeAll(); expected.removeAll()
+        }
         for window in windows { expected[window.id] = window.minutes }
         let recovery = !exhausted.isEmpty && !windows.isEmpty
             && expected.allSatisfy { id, minutes in windows.contains { $0.id == id && $0.minutes == minutes } }
@@ -45,12 +49,15 @@ struct QuotaRecoveryTracker: Codable {
 final class CodexQuota: ObservableObject {
     let history: QuotaHistory
     private let defaults: UserDefaults
+    private let fetchQuota: () throws -> [QuotaWindow]
+    private let uptime: () -> TimeInterval
+    private var requestGeneration: UInt64 = 0
     private var authorizationRequest: UInt64 = 0
     private var recovery: QuotaRecoveryTracker
     @Published private(set) var recoveryNotifications: Bool
     @Published var notificationMessage: String?
-    init(history: QuotaHistory = QuotaHistory(), defaults: UserDefaults = .standard) {
-        self.history = history; self.defaults = defaults
+    init(history: QuotaHistory = QuotaHistory(), defaults: UserDefaults = .standard, fetch: @escaping () throws -> [QuotaWindow] = CodexQuota.fetch, uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.history = history; self.defaults = defaults; self.fetchQuota = fetch; self.uptime = uptime
         enabled = defaults.object(forKey: "showCodexQuota") as? Bool ?? true
         recoveryNotifications = defaults.bool(forKey: "quotaRecoveryNotifications")
         recovery = defaults.data(forKey: "quotaRecoveryTracker").flatMap { try? JSONDecoder().decode(QuotaRecoveryTracker.self,from: $0) } ?? QuotaRecoveryTracker()
@@ -92,9 +99,14 @@ final class CodexQuota: ObservableObject {
     @Published var busy = false
     @Published var message: String?
     @Published var enabled: Bool {
-        didSet { defaults.set(enabled, forKey: "showCodexQuota"); if enabled { refresh(force: true) } }
+        didSet {
+            defaults.set(enabled, forKey: "showCodexQuota")
+            guard enabled != oldValue else { return }
+            requestGeneration &+= 1
+            if enabled { refresh(force: true) }
+        }
     }
-    private var lastAttempt = Date.distantPast
+    private var lastAttempt = -Double.infinity
     var summary: String {
         if !windows.isEmpty {
             return windows.map { "\($0.compact) \($0.resetsAt <= Date() ? "reset pending" : "\($0.remaining)%")" }.joined(separator: " · ")
@@ -102,19 +114,30 @@ final class CodexQuota: ObservableObject {
         return busy ? "Checking…" : "Open usage details"
     }
     func refresh(force: Bool = false) {
-        guard enabled, !busy, force || Date().timeIntervalSince(lastAttempt) >= 300 else { return }
-        busy = true; lastAttempt = Date()
+        let now = uptime()
+        guard enabled, !busy, force || now - lastAttempt >= 300 else { return }
+        busy = true; lastAttempt = now
+        let generation = requestGeneration
+        let fetch = fetchQuota
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let result = Result { try Self.fetch() }
+            let result = Result { try fetch() }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.busy = false
+                guard self.requestGeneration == generation else {
+                    if self.enabled { self.refresh(force: true) }
+                    return
+                }
                 switch result {
                 case .success(let windows): if self.enabled { self.accept(windows) }
                 case .failure(let error): self.message = error.localizedDescription
                 }
             }
         }
+    }
+    private static func number(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else { return nil }
+        return number.doubleValue
     }
     static func parse(_ result: [String: Any]) throws -> [QuotaWindow] {
         let buckets = result["rateLimitsByLimitId"] as? [String: Any]
@@ -123,9 +146,9 @@ final class CodexQuota: ObservableObject {
         }
         let windows = ["primary", "secondary"].compactMap { key -> QuotaWindow? in
             guard let window = bucket[key] as? [String: Any],
-                  let used = (window["usedPercent"] as? NSNumber)?.doubleValue, used.isFinite, used >= 0,
-                  let duration = (window["windowDurationMins"] as? NSNumber)?.intValue, duration > 0,
-                  let reset = (window["resetsAt"] as? NSNumber)?.doubleValue, reset.isFinite, reset > 0 else { return nil }
+                  let used = Self.number(window["usedPercent"]), used >= 0,
+                  let durationValue = Self.number(window["windowDurationMins"]), let duration = Int(exactly: durationValue), duration > 0,
+                  let reset = Self.number(window["resetsAt"]), reset > 0, reset <= Date.distantFuture.timeIntervalSince1970 else { return nil }
             return QuotaWindow(id: key, used: used, minutes: duration, resetsAt: Date(timeIntervalSince1970: reset))
         }
         guard !windows.isEmpty else { throw CodexQuotaError.unavailable("No quota windows were returned. Sign in to Codex with your ChatGPT account.") }

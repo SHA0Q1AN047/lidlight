@@ -102,6 +102,9 @@ final class Features: ObservableObject {
     private var taskPID: Int32?
     private var taskIdentity: String?
     private let defaults: UserDefaults
+    private let optionSender: ((String, UInt64) -> Void)?
+    private let optionsReader: (() -> DaemonOptions)?
+    private(set) var sessionGeneration: UInt64 = 0
     private let hotKey = HotKey()
     var restoreScreen: () -> Bool = { false }
     var actualAwake: () -> Bool? = { nil }
@@ -112,10 +115,11 @@ final class Features: ObservableObject {
         return Int(value)
     }
     var options: DaemonOptions {
-        (try? Data(contentsOf: URL(fileURLWithPath: "/var/db/lidlight-options.json"))).flatMap { try? JSONDecoder().decode(DaemonOptions.self, from: $0) } ?? DaemonOptions()
+        if let optionsReader { return optionsReader() }
+        return (try? Data(contentsOf: URL(fileURLWithPath: "/var/db/lidlight-options.json"))).flatMap { try? JSONDecoder().decode(DaemonOptions.self, from: $0) } ?? DaemonOptions()
     }
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(defaults: UserDefaults = .standard, sendOption: ((String, UInt64) -> Void)? = nil, readOptions: (() -> DaemonOptions)? = nil) {
+        self.defaults = defaults; self.optionSender = sendOption; self.optionsReader = readOptions
         countdownEvent = DayCountdown.load(defaults: defaults)
         preferences = defaults.data(forKey: "preferences.v1").flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
         history = defaults.stringArray(forKey: "activity") ?? []
@@ -161,6 +165,7 @@ final class Features: ObservableObject {
         return value
     }
     func send(_ key: String, _ value: UInt64) {
+        if let optionSender { optionSender(key,value); didChange(); return }
         let name = "com.lidlight.option-\(key)"
         if tokens[name] == nil {
             var token: Int32 = 0
@@ -215,20 +220,22 @@ final class Features: ObservableObject {
         notify_post("com.lidlight.set-\(["auto", "on", "off"][index])")
         didChange()
     }
-    func begin(until deadline: Date) {
-        guard pendingMode == nil else { message = "Wait for the current mode to apply."; return }
+    @discardableResult func begin(until deadline: Date) -> Bool {
+        guard pendingMode == nil else { message = "Wait for the current mode to apply."; return false }
         if options.deadline == 0 && !defaults.bool(forKey: "ruleActive"), let current = mode {
             preferences.baseMode = current; save()
         }
-        guard deadline > Date(), deadline.timeIntervalSinceNow <= 7 * 86400 else { message = "Choose a time within the next seven days."; return }
-        guard !options.oneShot else { message = "End the one-shot or presentation session first."; return }
+        guard deadline > Date(), deadline.timeIntervalSinceNow <= 7 * 86400 else { message = "Choose a time within the next seven days."; return false }
+        guard !options.oneShot else { message = "End the one-shot or presentation session first."; return false }
         clearTask()
         send("deadline", UInt64(deadline.timeIntervalSince1970))
         pendingMode = 1; pendingSince = Date(); lastRequested = 1
         record("Timed awake session started")
+        return true
     }
     func stopSession() {
         clearTask()
+        pendingMode = nil; lastRequested = nil
         let config = options
         if config.oneShot { send("one-shot", 0) }
         if config.deadline > 0 { send("deadline", 0) }
@@ -241,9 +248,13 @@ final class Features: ObservableObject {
         guard options.deadline == 0 && !options.oneShot else { message = "End the current session before starting another."; return }
         clearTask()
         send("one-shot", 1)
+        let generation = sessionGeneration
         if presentation {
             // Both notifications run on the daemon's main queue, preserving order.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.send("presentation", 1) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.sessionGeneration == generation, self.options.oneShot else { return }
+                self.send("presentation", 1)
+            }
         }
         pendingMode = 1; pendingSince = Date(); lastRequested = 1
         record(presentation ? "Presentation started" : "One-shot awake started")
@@ -251,12 +262,13 @@ final class Features: ObservableObject {
     func watchProcess() {
         guard let pid = Int32(processInput), pid > 1, pid != getpid(), let identity = Self.processIdentity(pid) else { message = "Enter the PID of a running process you own."; return }
         guard options.deadline == 0 && !options.oneShot else { message = "End the active session first."; return }
-        begin(until: Date().addingTimeInterval(7 * 86400))
+        guard begin(until: Date().addingTimeInterval(7 * 86400)) else { return }
         taskPID = pid; taskIdentity = identity
         defaults.set(pid, forKey: "watchedPID"); defaults.set(identity, forKey: "watchedIdentity")
         record("Waiting for process \(pid)")
     }
     private func clearTask() {
+        sessionGeneration &+= 1
         taskPID = nil; taskIdentity = nil
         defaults.removeObject(forKey: "watchedPID"); defaults.removeObject(forKey: "watchedIdentity")
     }
@@ -280,7 +292,9 @@ final class Features: ObservableObject {
     func blankScreen(lock: Bool) {
         if actualAwake() != true { oneShot() }
         send("presentation", 0)
+        let generation = sessionGeneration
         func perform(attempt: Int) {
+            guard sessionGeneration == generation else { return }
             guard actualAwake() == true else {
                 if attempt < 25 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { perform(attempt: attempt + 1) } }
                 else { message = "Could not confirm awake mode. Check AC-only and battery protection settings." }
