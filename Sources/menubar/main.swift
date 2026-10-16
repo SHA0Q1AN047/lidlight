@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private lazy var verification = InstallVerification(runningVersion: BuildVersion.current)
     private var displaysSleeping = false
     @MainActor private lazy var updater = AppUpdater()
-    let popover = NSPopover()
+    let popover = GlassDashboardPanel()
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let lidScreen = LidScreen()
     var stateToken: Int32 = 0
@@ -75,7 +75,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        popover.behavior = .transient
         popover.contentSize = NSSize(width: 380, height: 600)
         popover.contentViewController = NSHostingController(rootView: Dashboard(
             state: dashboard, features: features, quota: quota, updater: updater, monitor: monitor, verification: verification,
@@ -175,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func toggleDashboard() {
         guard let button = statusItem.button else { return }
         if popover.isShown { popover.close() } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.show(relativeTo: button.bounds, of: button)
             popover.contentViewController?.view.window?.isOpaque = false
             popover.contentViewController?.view.window?.backgroundColor = .clear
             refresh()

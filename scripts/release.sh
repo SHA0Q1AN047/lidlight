@@ -32,6 +32,8 @@ swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sourc
 "$RELEASE_TEMP/weather-tests"
 swiftc Sources/menubar/ProcessCPU.swift Sources/menubar/HardwareSensors.swift Sources/menubar/PerformanceMonitor.swift Tests/PerformanceTests.swift -o "$RELEASE_TEMP/performance-tests"
 "$RELEASE_TEMP/performance-tests"
+swiftc Sources/menubar/GlassDashboardPanel.swift Tests/GlassPanelTests.swift -o "$RELEASE_TEMP/glass-panel-tests"
+"$RELEASE_TEMP/glass-panel-tests"
 swiftc Sources/menubar/CPUUsage.swift Sources/menubar/CatThermal.swift Sources/menubar/MenuBarIcon.swift Sources/menubar/MenuCatAnimator.swift Tests/MenuCatTests.swift -o "$RELEASE_TEMP/cat-tests"
 "$RELEASE_TEMP/cat-tests"
 swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sources/menubar/CatThermal.swift Sources/menubar/InstallVerification.swift Sources/Shared/ServiceReceipt.swift Tests/ImprovementsTests.swift -o "$RELEASE_TEMP/improvements-tests"

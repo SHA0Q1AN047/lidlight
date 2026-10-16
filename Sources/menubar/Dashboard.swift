@@ -143,6 +143,7 @@ struct Dashboard: View {
         }
         }.frame(width: 380, height: 600)
             .background(PanelBackdrop())
+            .clipShape(RoundedRectangle(cornerRadius: 26))
             .foregroundColor(.primary).accentColor(LidlightPalette.iris).tint(LidlightPalette.iris).environment(\.locale, Locale(identifier: "en_US"))
     }
     private var controlsContent: some View {

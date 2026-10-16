@@ -162,3 +162,7 @@ The root background service changes `pmset disablesleep`. Backlight control uses
 ## About
 
 Lidlight is the author's original macOS utility.
+
+### Clear glass panel
+
+The dashboard uses a transparent anchored panel, one lightly frosted desktop material and near-clear content surfaces with fine reflective edges. Content cards avoid stacking blur and large white fills. Native Liquid Glass controls remain available on macOS 26; macOS 12–15 retain standard material controls. The panel closes on outside click, Escape, application switches or display changes. It supports keyboard entry and clamps its position to the active screen. Reduce Transparency keeps an opaque, readable appearance without changing system preferences.

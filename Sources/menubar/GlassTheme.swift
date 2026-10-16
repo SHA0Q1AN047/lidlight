@@ -20,7 +20,7 @@ extension EnvironmentValues {
     }
 }
 
-/// Glass belongs to controls; content uses a quieter material for legibility.
+/// Controls use native glass; content adds only a thin clear surface to avoid layered blur.
 extension View {
     func lidlightGlass(selected: Bool = false, radius: CGFloat = 14) -> some View {
         modifier(GlassControl(selected: selected, radius: radius))
@@ -42,7 +42,7 @@ private struct GlassControl: ViewModifier {
                     .overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(selected ? 0.18 : 0.055)))
             }
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(.clear.tint(selected ? LidlightPalette.iris.opacity(0.16) : nil).interactive(), in: RoundedRectangle(cornerRadius: radius))
+            content.glassEffect(.clear.tint(selected ? LidlightPalette.iris.opacity(0.08) : nil).interactive(), in: RoundedRectangle(cornerRadius: radius))
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius))
         }
@@ -59,12 +59,15 @@ private struct ContentSurface: ViewModifier {
                 RoundedRectangle(cornerRadius: radius).fill(Color(nsColor: .controlBackgroundColor))
                     .overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(0.035)))
             }
-        } else if #available(macOS 26.0, *) {
-            content.glassEffect(.clear.tint(LidlightPalette.iris.opacity(0.015)),in: RoundedRectangle(cornerRadius: radius))
         } else {
             content.background {
-                RoundedRectangle(cornerRadius: radius).fill(.ultraThinMaterial).opacity(0.55)
-            }.overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(0.14),lineWidth: 0.5))
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(LinearGradient(colors: [.white.opacity(0.055), .white.opacity(0.012)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            }.overlay {
+                RoundedRectangle(cornerRadius: radius).strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.05), .white.opacity(0.16)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.65)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -72,22 +75,28 @@ private struct ContentSurface: ViewModifier {
 struct PanelMaterial: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.alphaValue = 0.72
+        view.material = .underWindowBackground
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = .underWindowBackground
+    }
 }
 
 struct PanelBackdrop: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.lidlightOpaquePreview) private var opaquePreview
     var body: some View {
         ZStack {
-            if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
-            else { PanelMaterial() }
-            LinearGradient(colors: [LidlightPalette.iris.opacity(0.035), LidlightPalette.mist.opacity(0.015), LidlightPalette.peach.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            if reduceTransparency || opaquePreview { Color(nsColor: .windowBackgroundColor) }
+            else { PanelMaterial().opacity(0.38) }
+            LinearGradient(colors: [LidlightPalette.iris.opacity(0.018), LidlightPalette.mist.opacity(0.008), LidlightPalette.peach.opacity(0.012)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }.overlay {
+            RoundedRectangle(cornerRadius: 26).strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.52), .white.opacity(0.08), .white.opacity(0.24)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.75)
+                .allowsHitTesting(false)
         }
     }
 }
