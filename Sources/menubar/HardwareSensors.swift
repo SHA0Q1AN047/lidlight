@@ -1,16 +1,24 @@
 import Foundation
 import IOKit
 
-/// Read-only AppleSMC client. Only key-info (9) and read-value (5) commands are sent.
+/// Read-only AppleSMC client. Only read-value (5), enumerate-key (8) and key-info (9) commands are sent.
 final class HardwareSensors {
     private var connection: io_connect_t = 0
     private var metadata: [String: (Int, String)] = [:]
     private var temperatureKeys: [String]?
+    private var missingKeys: [String: Double] = [:]
+    private var lastConnectionAttempt = -Double.infinity
+    private var lastDiscovery = -Double.infinity
+    private var emptySamples = 0
     private let brand = HardwareSensors.cpuBrand()
     private let fanless = HardwareSensors.isKnownFanless(model: HardwareSensors.modelIdentifier())
     private var hid: CPUThermalHID?
     private var lastHIDAttempt = -Double.infinity
-    init() {
+    init() { open() }
+    private func open() {
+        lastConnectionAttempt = ProcessInfo.processInfo.systemUptime
+        if connection != 0 { IOServiceClose(connection); connection = 0 }
+        metadata.removeAll(); missingKeys.removeAll(); temperatureKeys = nil
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         guard service != 0 else { return }
         defer { IOObjectRelease(service) }
@@ -18,8 +26,8 @@ final class HardwareSensors {
     }
     deinit { if connection != 0 { IOServiceClose(connection) } }
     var connected: Bool { connection != 0 }
-    private func packet(key: String, command: UInt8, count: Int = 0) -> [UInt8]? {
-        guard connected, command == 5 || command == 9, key.utf8.count == 4, count >= 0, count <= 32 else { return nil }
+    private func packet(key: String, command: UInt8, count: Int = 0, index: UInt32 = 0) -> [UInt8]? {
+        guard connected, command == 5 || command == 8 || command == 9, key.utf8.count == 4, count >= 0, count <= 32 else { return nil }
         // AppleSMC's user-client ABI is an 80-byte record on both supported architectures.
         var request = [UInt8](repeating: 0, count: 80)
         var reply = request
@@ -27,6 +35,7 @@ final class HardwareSensors {
         for i in 0..<4 { request[i] = UInt8(truncatingIfNeeded: code >> (8*i)) }
         request[28] = UInt8(count)
         request[42] = command
+        for i in 0..<4 { request[44+i] = UInt8(truncatingIfNeeded: index >> (8*i)) }
         var length = 80
         let result = request.withUnsafeBytes { input in
             reply.withUnsafeMutableBytes { output in
@@ -37,14 +46,16 @@ final class HardwareSensors {
         return reply
     }
     func read(_ key: String) -> Double? {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let retry = missingKeys[key], uptime < retry { return nil }
         let info: (Int, String)
         if let cached = metadata[key] { info = cached }
         else {
-            guard let bytes = packet(key: key, command: 9) else { return nil }
+            guard let bytes = packet(key: key, command: 9) else { missingKeys[key] = uptime + 60; return nil }
             let count = (0..<4).reduce(0) { $0 | (Int(bytes[28+$1]) << (8*$1)) }
             let type = String(bytes: bytes[32..<36].reversed(), encoding: .ascii) ?? ""
             guard (1...32).contains(count), type.count == 4 else { return nil }
-            info = (count,type); metadata[key] = info
+            info = (count,type); metadata[key] = info; missingKeys.removeValue(forKey: key)
         }
         guard let response = packet(key: key, command: 5, count: info.0) else { metadata.removeValue(forKey: key); return nil }
         return Self.decode(type: info.1, bytes: Array(response[48..<(48+info.0)]))
@@ -62,25 +73,55 @@ final class HardwareSensors {
             value = Double(Int16(bitPattern: UInt16(bytes[0]) << 8 | UInt16(bytes[1]))) / 256
         default:
             let chars = Array(type)
-            if chars.count == 4, chars[0] == "f", chars[1] == "p", let integer = chars[2].hexDigitValue, let fraction = chars[3].hexDigitValue, integer + fraction == 16, bytes.count == 2 {
-                value = Double(UInt16(bytes[0]) << 8 | UInt16(bytes[1])) / pow(2, Double(fraction))
+            if chars.count == 4, (chars[0] == "f" || chars[0] == "s"), chars[1] == "p", let integer = chars[2].hexDigitValue, let fraction = chars[3].hexDigitValue, integer + fraction == (chars[0] == "s" ? 15 : 16), bytes.count == 2 {
+                let raw = UInt16(bytes[0]) << 8 | UInt16(bytes[1])
+                value = (chars[0] == "s" ? Double(Int16(bitPattern: raw)) : Double(raw)) / pow(2, Double(fraction))
             }
         }
         guard let value, value.isFinite else { return nil }
         return value
     }
     static func cpuKeys(brand: String) -> [String] {
-        if brand.contains("Apple M1") { return ["Tp09","Tp0T","Tp01","Tp05","Tp0D","Tp0H","Tp0L","Tp0P","Tp0X","Tp0b"] }
-        if brand.contains("Apple M2") { return ["Tp1h","Tp1t","Tp1p","Tp1l","Tp01","Tp05","Tp09","Tp0D","Tp0X","Tp0b","Tp0f","Tp0j"] }
-        if brand.contains("Apple M3") { return ["Te05","Te0L","Te0P","Te0S","Tf04","Tf09","Tf0A","Tf0B","Tf0D","Tf0E","Tf44","Tf49","Tf4A","Tf4B","Tf4D","Tf4E"] }
-        if brand.contains("Apple M4") { return ["Te05","Te0S","Te09","Te0H","Tp01","Tp05","Tp09","Tp0D","Tp0V","Tp0Y","Tp0b","Tp0e"] }
-        if brand.contains("Apple M5") { return ["Tp00","Tp04","Tp08","Tp0C","Tp0G","Tp0K","Tp0O","Tp0R","Tp0U","Tp0X","Tp0a","Tp0d","Tp0g","Tp0j","Tp0m","Tp0p","Tp0u","Tp0y"] }
+        let family = brand.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+        if brand.hasPrefix("Apple ") && family == "M1" { return ["Tp09","Tp0T","Tp01","Tp05","Tp0D","Tp0H","Tp0L","Tp0P","Tp0X","Tp0b"] }
+        if brand.hasPrefix("Apple ") && family == "M2" { return ["Tp1h","Tp1t","Tp1p","Tp1l","Tp01","Tp05","Tp09","Tp0D","Tp0X","Tp0b","Tp0f","Tp0j"] }
+        if brand.hasPrefix("Apple ") && family == "M3" { return ["Te05","Te0L","Te0P","Te0S","Tf04","Tf09","Tf0A","Tf0B","Tf0D","Tf0E","Tf44","Tf49","Tf4A","Tf4B","Tf4D","Tf4E"] }
+        if brand.hasPrefix("Apple ") && family == "M4" { return ["Te05","Te0S","Te09","Te0H","Tp01","Tp05","Tp09","Tp0D","Tp0V","Tp0Y","Tp0b","Tp0e"] }
+        if brand.hasPrefix("Apple ") && family == "M5" { return ["Tp00","Tp04","Tp08","Tp0C","Tp0G","Tp0K","Tp0O","Tp0R","Tp0U","Tp0X","Tp0a","Tp0d","Tp0g","Tp0j","Tp0m","Tp0p","Tp0u","Tp0y"] }
         if brand.contains("Intel") { return ["TCAD","TC0D","TC0E","TC0F","TC0P","TC0H"] }
         return [] // Unknown silicon: do not label arbitrary temperature sensors as CPU.
     }
+    /// Enumerate once per connection/recovery, never on every two-second sample.
+    private func availableKeys() -> [String] {
+        Self.discoverKeys(count: read("#KEY")) { packet(key: "    ", command: 8, index: $0) }
+    }
+    static func discoverKeys(count: Double?, readIndex: (UInt32) -> [UInt8]?) -> [String] {
+        guard let count, count.isFinite, count > 0,
+              count <= 16_384, count.rounded() == count else { return [] }
+        var keys = Set<String>()
+        for index in 0..<Int(count) {
+            guard let response = readIndex(UInt32(index)), response.count == 80,
+                  let key = String(bytes: response[0..<4].reversed(), encoding: .ascii),
+                  key.utf8.allSatisfy({ $0 >= 32 && $0 <= 126 }) else { continue }
+            keys.insert(key)
+        }
+        return keys.sorted()
+    }
+    static func selectedCPUKeys(brand: String, available: [String]) -> [String] {
+        let known = cpuKeys(brand: brand)
+        // Intel core channels have a numeric index. TCGC is integrated GPU, not CPU.
+        let discovered = brand.contains("Intel") ? available.filter { key in
+            let bytes = Array(key.utf8)
+            return ["TCAC", "TCBC", "TCAH", "TCBH"].contains(key) ||
+                (bytes.count == 4 && bytes[0] == 84 && bytes[1] == 67 &&
+                 (48...57).contains(bytes[2]) && [67, 99, 68, 69, 70, 72, 80].contains(bytes[3]))
+        } : []
+        return Array(Set(known + discovered)).sorted()
+    }
+    static func usesHIDFallback(brand: String) -> Bool { brand.hasPrefix("Apple M") }
     static func validTemperature(_ value: Double) -> Bool { value.isFinite && value >= 10 && value < 130 }
     static func isKnownFanless(model: String) -> Bool {
-        ["MacBookAir10,1", "Mac14,2", "Mac14,15", "Mac15,12", "Mac15,13", "Mac16,12", "Mac16,13", "Mac17,3", "Mac17,4"].contains(model)
+        ["MacBook8,1", "MacBook9,1", "MacBook10,1", "MacBookAir10,1", "Mac14,2", "Mac14,15", "Mac15,12", "Mac15,13", "Mac16,12", "Mac16,13", "Mac17,3", "Mac17,4"].contains(model)
     }
     static func modelIdentifier() -> String {
         var count = 0
@@ -98,13 +139,24 @@ final class HardwareSensors {
     }
     func sample() -> SensorSample {
         let now = Date()
-        if temperatureKeys == nil { temperatureKeys = Self.cpuKeys(brand: brand) }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        // Retry after controller failure, or after sleep leaves a stale connection.
+        if (!connected || emptySamples >= 3) && uptime-lastConnectionAttempt >= 60 {
+            open(); hid = nil; lastHIDAttempt = -.infinity; emptySamples = 0
+        }
+        if temperatureKeys == nil || (emptySamples >= 3 && uptime-lastDiscovery >= 60) {
+            temperatureKeys = Self.selectedCPUKeys(brand: brand, available: brand.contains("Intel") ? availableKeys() : [])
+            lastDiscovery = uptime
+        }
         let primary = Self.collect(now: now, keys: temperatureKeys ?? [], read: read)
-        // Keep valid SMC readings primary. M1 can also expose CPU thermal services through HID.
+        if primary.watts == nil && primary.cpuCelsius == nil && primary.fanCount == nil { emptySamples += 1 }
+        else { emptySamples = 0 }
+        // CPU-named HID services are useful on any Apple Silicon generation.
         var fallback: (key: String, celsius: Double)?
-        if primary.cpuCelsius == nil && brand.hasPrefix("Apple M1") {
-            let uptime = ProcessInfo.processInfo.systemUptime
-            if hid == nil && uptime-lastHIDAttempt >= 60 { lastHIDAttempt = uptime; hid = CPUThermalHID() }
+        if primary.cpuCelsius == nil && Self.usesHIDFallback(brand: brand) {
+            if uptime-lastHIDAttempt >= 60 {
+                lastHIDAttempt = uptime; hid = CPUThermalHID()
+            }
             fallback = hid?.read()
         }
         return Self.resolved(primary, fallback: fallback, fanless: fanless)

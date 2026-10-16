@@ -11,6 +11,36 @@ import Foundation
         expect(HardwareSensors.decode(type: "flt ", bytes: [0,0,0xc0,0x7f]) == nil, "Reject NaN")
         expect(HardwareSensors.decode(type: "flt ", bytes: [0]) == nil, "Reject truncated data")
         expect(HardwareSensors.decode(type: "xxxx", bytes: [0,0]) == nil, "Unknown format")
+        expect(HardwareSensors.decode(type: "sp4b",bytes: [0x19,0]) == 3.125,"Older signed SMC formats decode correctly")
+        expect(HardwareSensors.decode(type: "sp4b",bytes: [0xf8,0]) == -1,"Older signed SMC values retain sign")
+        expect(HardwareSensors.decode(type: "spff",bytes: [0,0]) == nil,"Malformed fixed point layout is rejected")
+        var inventoryCalls = 0
+        for invalidCount: Double? in [nil,-1,0,1.5,.nan,.infinity,16_385] {
+            expect(HardwareSensors.discoverKeys(count: invalidCount,readIndex: { _ in inventoryCalls += 1; return nil }).isEmpty,"Invalid SMC inventory count is rejected")
+        }
+        expect(inventoryCalls == 0,"Malformed count never invokes the controller")
+        let discoveredKeys = HardwareSensors.discoverKeys(count: 4) { index in
+            if index == 1 { return nil }
+            if index == 2 { return [0] }
+            var response = [UInt8](repeating: 0,count: 80)
+            response.replaceSubrange(0..<4,with: Array("TC1C".utf8).reversed())
+            return response
+        }
+        expect(discoveredKeys == ["TC1C"],"Inventory tolerates failed/truncated responses and deduplicates the decoded ABI key")
+        let inventory = ["TC0c","TC1C","TC9D","TCAC","TCBC","TCGC","TG0D","TB1T","Tp0P","TC1x","TC1C","TC12C"]
+        let intel = HardwareSensors.selectedCPUKeys(brand: "Intel(R) Xeon(R)",available: inventory)
+        expect(["TC0c","TC1C","TC9D","TCAC","TCBC"].allSatisfy { intel.contains($0) },"Intel core and dual-package channels are discovered")
+        expect(["TCGC","TG0D","TB1T","Tp0P","TC1x","TC12C"].allSatisfy { !intel.contains($0) },"GPU, battery, board and unclassified channels are excluded")
+        expect(intel.count == Set(intel).count,"Discovery removes duplicate keys")
+        for chip in ["Apple M1","Apple M1 Pro","Apple M2 Max","Apple M3 Ultra","Apple M4","Apple M5","Apple M99"] {
+            expect(HardwareSensors.usesHIDFallback(brand: chip),"Every Apple Silicon family can try named CPU services")
+        }
+        expect(!HardwareSensors.usesHIDFallback(brand: "Intel Core i7"),"Intel does not attempt Apple Silicon services")
+        expect(HardwareSensors.cpuKeys(brand: "Apple M10").isEmpty,"M10 never inherits M1 keys by substring")
+        expect(HardwareSensors.selectedCPUKeys(brand: "Apple M99",available: inventory).isEmpty,"Unknown silicon never borrows Intel or unrelated sensors")
+        for model in ["MacBook8,1","MacBook9,1","MacBook10,1"] {
+            expect(HardwareSensors.isKnownFanless(model: model),"12-inch Intel MacBooks have no fans")
+        }
         let now = Date()
         var values: [String: Double] = ["PSTR": 18.25,"T001": 45,"T002": 51,"FNum": 2,"F0Ac": 0,"F1Ac": 2300]
         func collect() -> SensorSample { HardwareSensors.collect(now: now, keys: ["T001","T002"], read: { values[$0] }) }
