@@ -10,6 +10,8 @@ final class HardwareSensors {
     private var lastConnectionAttempt = -Double.infinity
     private var lastDiscovery = -Double.infinity
     private var emptySamples = 0
+    private var cpuSelection = CPUChannelSelection()
+    private var selectedCPUKey: String? { cpuSelection.key }
     private let brand = HardwareSensors.cpuBrand()
     private let fanless = HardwareSensors.isKnownFanless(model: HardwareSensors.modelIdentifier())
     private var hid: CPUThermalHID?
@@ -116,7 +118,8 @@ final class HardwareSensors {
                 (bytes.count == 4 && bytes[0] == 84 && bytes[1] == 67 &&
                  (48...57).contains(bytes[2]) && [67, 99, 68, 69, 70, 72, 80].contains(bytes[3]))
         } : []
-        return Array(Set(known + discovered)).sorted()
+        var seen = Set<String>()
+        return (known + discovered.sorted()).filter { seen.insert($0).inserted }
     }
     static func usesHIDFallback(brand: String) -> Bool { brand.hasPrefix("Apple M") }
     static func validTemperature(_ value: Double) -> Bool { value.isFinite && value >= 10 && value < 130 }
@@ -148,35 +151,68 @@ final class HardwareSensors {
             temperatureKeys = Self.selectedCPUKeys(brand: brand, available: brand.contains("Intel") ? availableKeys() : [])
             lastDiscovery = uptime
         }
-        let primary = Self.collect(now: now, keys: temperatureKeys ?? [], read: read)
+        let primary = Self.collect(now: now, keys: temperatureKeys ?? [], preferredKey: selectedCPUKey, read: read)
         if primary.watts == nil && primary.cpuCelsius == nil && primary.fanCount == nil { emptySamples += 1 }
         else { emptySamples = 0 }
         // CPU-named HID services are useful on any Apple Silicon generation.
         var fallback: (key: String, celsius: Double)?
-        if primary.cpuCelsius == nil && Self.usesHIDFallback(brand: brand) {
+        if (primary.cpuCelsius == nil || selectedCPUKey?.hasPrefix("HID: ") == true) && Self.usesHIDFallback(brand: brand) {
             if uptime-lastHIDAttempt >= 60 {
                 lastHIDAttempt = uptime; hid = CPUThermalHID()
             }
-            fallback = hid?.read()
+            fallback = hid?.read(preferredKey: selectedCPUKey)
         }
-        return Self.resolved(primary, fallback: fallback, fanless: fanless)
+        let result = Self.resolved(primary, fallback: fallback, fanless: fanless, preferredKey: selectedCPUKey)
+        return cpuSelection.accept(result)
     }
-    static func resolved(_ primary: SensorSample, fallback: (key: String, celsius: Double)?, fanless: Bool) -> SensorSample {
+    static func resolved(_ primary: SensorSample, fallback: (key: String, celsius: Double)?, fanless: Bool, preferredKey: String? = nil) -> SensorSample {
         let alternate = fallback.flatMap { validTemperature($0.celsius) ? $0 : nil }
-        return SensorSample(date: primary.date,watts: primary.watts,cpuCelsius: primary.cpuCelsius ?? alternate?.celsius,cpuKey: primary.cpuKey ?? alternate?.key,
+        let useAlternate = alternate != nil && (primary.cpuCelsius == nil || alternate?.key == preferredKey)
+        return SensorSample(date: primary.date,watts: primary.watts,cpuCelsius: useAlternate ? alternate?.celsius : primary.cpuCelsius,cpuKey: useAlternate ? alternate?.key : primary.cpuKey,
             fans: fanless ? [] : primary.fans,fanCount: fanless ? 0 : primary.fanCount)
     }
-    static func collect(now: Date, keys: [String], read: (String) -> Double?) -> SensorSample {
-        let temperatures = keys.compactMap { key -> (String,Double)? in
-            guard let value = read(key), Self.validTemperature(value) else { return nil }; return (key,value)
+    static func selectTemperature(_ readings: [(String, Double)], preferredKey: String?) -> (String, Double)? {
+        let valid = readings.filter { validTemperature($0.1) }
+        return valid.first { $0.0 == preferredKey } ?? valid.first
+    }
+    static func collect(now: Date, keys: [String], preferredKey: String? = nil, read: (String) -> Double?) -> SensorSample {
+        let ordered = preferredKey.flatMap { keys.contains($0) ? [$0] : nil }.map { preferred in
+            preferred + keys.filter { $0 != preferred[0] }
+        } ?? keys
+        // Read only the selected channel on the normal path; probe alternatives on failure.
+        var selected: (String,Double)?
+        for key in ordered {
+            guard let value = read(key), Self.validTemperature(value) else { continue }
+            selected = (key,value)
+            break
         }
-        let hottest = temperatures.max { $0.1 < $1.1 }
         let power = read("PSTR").flatMap { $0.isFinite && $0 > 0 && $0 < 2000 ? $0 : nil }
         let count = read("FNum").flatMap { $0.isFinite && $0 >= 0 && $0 <= 8 && $0.rounded() == $0 ? Int($0) : nil }
         let fans = (0..<(count ?? 0)).map { index in
             FanReading(index: index, rpm: read("F\(index)Ac").flatMap { $0.isFinite && $0 >= 0 && $0 < 30_000 ? $0 : nil })
         }
-        return SensorSample(date: now, watts: power, cpuCelsius: hottest?.1, cpuKey: hottest?.0, fans: fans, fanCount: count)
+        return SensorSample(date: now, watts: power, cpuCelsius: selected?.1, cpuKey: selected?.0, fans: fans, fanCount: count)
+    }
+}
+
+/// Keep source identity through brief sensor errors without inventing a temperature.
+struct CPUChannelSelection {
+    private(set) var key: String?
+    private var failures = 0
+    mutating func accept(_ candidate: SensorSample) -> SensorSample {
+        if candidate.cpuKey == key && candidate.cpuCelsius != nil {
+            failures = 0
+            return candidate
+        }
+        if key == nil || failures >= 2 {
+            if let newKey = candidate.cpuKey, candidate.cpuCelsius != nil {
+                key = newKey; failures = 0
+                return candidate
+            }
+        }
+        failures = min(failures + 1, 3)
+        return SensorSample(date: candidate.date,watts: candidate.watts,cpuCelsius: nil,cpuKey: key,
+                            fans: candidate.fans,fanCount: candidate.fanCount)
     }
 }
 
@@ -229,16 +265,23 @@ final class CPUThermalHID {
     static func isCPUSensor(_ name: String) -> Bool {
         name.hasPrefix("pACC MTR Temp Sensor") || name.hasPrefix("eACC MTR Temp Sensor")
     }
-    func read() -> (key: String, celsius: Double)? {
+    func read(preferredKey: String? = nil) -> (key: String, celsius: Double)? {
         guard let list = services(client)?.takeRetainedValue() else { return nil }
-        var hottest: (String,Double)?
+        var readings: [(String,Double)] = []
         for service in list as [AnyObject] {
             guard let name = property(service,"Product" as CFString)?.takeRetainedValue() as? String,
                   Self.isCPUSensor(name), let sample = event(service,15,0,0)?.takeRetainedValue() else { continue }
             let temperature = value(sample,15 << 16)
             guard HardwareSensors.validTemperature(temperature) else { continue }
-            if temperature > (hottest?.1 ?? -.infinity) { hottest = (name,temperature) }
+            readings.append(("HID: " + name,temperature))
         }
-        return hottest.map { ("HID: " + $0.0,$0.1) }
+        // Service enumeration order is not stable. Prefer a performance-cluster channel,
+        // then keep the selected identity even when another channel becomes warmer.
+        readings.sort {
+            let left = $0.0.hasPrefix("HID: pACC") ? 0 : 1
+            let right = $1.0.hasPrefix("HID: pACC") ? 0 : 1
+            return left == right ? $0.0 < $1.0 : left < right
+        }
+        return HardwareSensors.selectTemperature(readings, preferredKey: preferredKey)
     }
 }

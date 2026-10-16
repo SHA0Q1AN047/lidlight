@@ -45,8 +45,19 @@ import Foundation
         var values: [String: Double] = ["PSTR": 18.25,"T001": 45,"T002": 51,"FNum": 2,"F0Ac": 0,"F1Ac": 2300]
         func collect() -> SensorSample { HardwareSensors.collect(now: now, keys: ["T001","T002"], read: { values[$0] }) }
         var sample = collect()
-        expect(sample.watts == 18.25 && sample.cpuCelsius == 51 && sample.cpuKey == "T002", "System power and hottest CPU sensor")
+        expect(sample.watts == 18.25 && sample.cpuCelsius == 45 && sample.cpuKey == "T001", "System power and fixed priority CPU sensor")
         expect(sample.fans.count == 2 && sample.fans[0].rpm == 0, "Zero RPM is a stopped fan, not missing data")
+        values["T002"] = 90
+        expect(collect().cpuKey == "T001" && collect().cpuCelsius == 45,"A warmer secondary sensor never steals the primary selection")
+        let locked = HardwareSensors.collect(now: now,keys: ["T001","T002"],preferredKey: "T002",read: { values[$0] })
+        expect(locked.cpuKey == "T002", "Valid active sensor stays selected even when an earlier priority sensor recovers")
+        values["T002"] = .nan
+        expect(HardwareSensors.collect(now: now,keys: ["T001","T002"],preferredKey: "T002",read: { values[$0] }).cpuKey == "T001","Invalid selected sensor falls back")
+        values["T002"] = 51
+        expect(HardwareSensors.selectedCPUKeys(brand: "Apple M2 Pro",available: []).first == "Tp1h","Model primary priority survives discovery")
+        var queried: [String] = []
+        _ = HardwareSensors.collect(now: now,keys: ["T001","T002"],preferredKey: "T001",read: { key in queried.append(key); return values[key] })
+        expect(queried.contains("T001") && !queried.contains("T002"),"Healthy primary avoids sampling other CPU channels")
         values.removeValue(forKey: "F0Ac"); sample = collect()
         expect(sample.fans[0].rpm == nil && sample.fans[1].rpm == 2300, "Partial fan failure remains visible")
         values = ["FNum": 0]; sample = collect()
@@ -70,12 +81,26 @@ import Foundation
         let recovered = HardwareSensors.resolved(missing,fallback: ("HID: pACC MTR Temp Sensor0",52.5),fanless: true)
         expect(recovered.cpuCelsius == 52.5 && recovered.fanCount == 0 && recovered.fans.isEmpty, "M1 HID fallback works independently of SMC and fan count")
         expect(HardwareSensors.resolved(recovered,fallback: ("HID: other",60),fanless: false).cpuCelsius == 52.5, "Primary temperature wins over fallback")
+        expect(HardwareSensors.resolved(recovered,fallback: ("HID: pACC MTR Temp Sensor0",60),fanless: false,preferredKey: "HID: pACC MTR Temp Sensor0").cpuCelsius == 60,"Active HID source stays selected when SMC recovers")
+        expect(HardwareSensors.selectTemperature([("HID: pACC0",40),("HID: pACC1",90)],preferredKey: "HID: pACC0")?.0 == "HID: pACC0","HID does not chase the hottest channel")
         expect(HardwareSensors.resolved(missing,fallback: ("HID: cpu",6.7),fanless: false).cpuCelsius == nil, "Invalid fallback remains unavailable")
         expect(HardwareSensors.resolved(missing,fallback: nil,fanless: false).fanCount == nil, "Failed fan read never becomes fanless")
         expect(HardwareSensors.cpuKeys(brand: "Apple M2 Pro").contains("Tp1h"), "M2 CPU thermal zone")
         expect(HardwareSensors.cpuKeys(brand: "Apple M99").isEmpty, "Unknown silicon does not guess CPU temperature")
         expect(PerformanceMonitor.isFresh(sample, now: now), "Fresh sample")
         expect(!PerformanceMonitor.isFresh(sample, now: now.addingTimeInterval(7)), "Stale sample hidden")
+        var selection = CPUChannelSelection()
+        func channel(_ key: String, _ temperature: Double) -> SensorSample {
+            SensorSample(date: now,watts: 12,cpuCelsius: temperature,cpuKey: key,fans: [],fanCount: 0)
+        }
+        expect(selection.accept(channel("primary",50)).cpuKey == "primary","First valid primary locks source")
+        expect(selection.accept(channel("alternate",80)).cpuCelsius == nil && selection.key == "primary","Single failed primary does not switch or reuse a stale temperature")
+        expect(selection.accept(channel("primary",53)).cpuCelsius == 53,"Primary recovery clears failure streak")
+        _ = selection.accept(channel("alternate",80))
+        let pending = selection.accept(channel("alternate",81))
+        expect(pending.cpuCelsius == nil && pending.watts == 12 && selection.key == "primary","Two transient failures retain source identity and other metrics")
+        expect(selection.accept(channel("alternate",82)).cpuKey == "alternate","Three consecutive failures permit valid fallback")
+        expect(selection.accept(channel("alternate",60)).cpuCelsius == 60,"Fallback stays fixed after selection")
         let monitor = PerformanceMonitor(readSample: { sample })
         monitor.refresh(visible: false)
         expect(!monitor.busy && monitor.sample == nil, "Hidden panel never samples")

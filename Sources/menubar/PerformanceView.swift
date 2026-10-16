@@ -13,7 +13,7 @@ struct PerformanceSummary: View {
             }.font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
             HStack(spacing: 8) {
                 metric("System power", color: LidlightPalette.iris, path: { $0.watts }, value: sample?.watts.map { String(format: "%.1f W", $0) } ?? "—")
-                metric("CPU hottest", color: LidlightPalette.peach, path: { $0.cpuCelsius }, value: sample?.cpuCelsius.map { String(format: "%.1f°C", $0) } ?? "—")
+                metric("CPU temp", color: LidlightPalette.peach, path: { $0.cpuCelsius }, value: sample?.cpuCelsius.map { String(format: "%.1f°C", $0) } ?? "—", cpuSource: sample?.cpuKey)
                 if monitor.hasFans != false {
                     metric("Fans · max RPM", color: LidlightPalette.mist, path: { $0.fans.compactMap(\.rpm).max() }, value: sample?.fans.compactMap(\.rpm).max().map { String(format: "%.0f", $0) } ?? "—")
                 }
@@ -21,12 +21,12 @@ struct PerformanceSummary: View {
             Text("Last 2 min · While panel is open").font(.system(size: 8)).foregroundColor(.secondary)
         }.contentShape(Rectangle())
     }
-    private func metric(_ title: String, color: Color, path: @escaping (SensorSample) -> Double?, value: String) -> some View {
+    private func metric(_ title: String, color: Color, path: @escaping (SensorSample) -> Double?, value: String, cpuSource: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.system(size: 9)).foregroundColor(.secondary)
             Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.65).allowsTightening(true)
-            SensorTrend(history: monitor.history, now: now, value: path, color: color).frame(height: 18)
+            SensorTrend(history: monitor.history, now: now, value: path, color: color, cpuSource: cpuSource).frame(height: 18)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -52,7 +52,7 @@ struct PerformanceView: View {
                 card("System power", value: current?.watts, unit: "W", icon: "bolt.fill", color: LidlightPalette.iris, path: \.watts,
                      note: "System sensor reading")
                 card("CPU temp", value: current?.cpuCelsius, unit: "°C", icon: "thermometer", color: LidlightPalette.peach, path: \.cpuCelsius,
-                     note: current?.cpuKey?.hasPrefix("HID: ") == true ? "CPU thermal service" : "Hottest CPU sensor")
+                     note: current?.cpuKey.map { "Fixed sensor · " + $0 } ?? "Waiting for CPU sensor", cpuSource: current?.cpuKey)
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Top CPU processes").font(.system(size: 13, weight: .semibold))
@@ -94,7 +94,7 @@ struct PerformanceView: View {
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
-    private func card(_ title: String, value: Double?, unit: String, icon: String, color: Color, path: KeyPath<SensorSample, Double?>, note: String) -> some View {
+    private func card(_ title: String, value: Double?, unit: String, icon: String, color: Color, path: KeyPath<SensorSample, Double?>, note: String, cpuSource: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             Label(title, systemImage: icon).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -106,7 +106,7 @@ struct PerformanceView: View {
                     Text(unit).font(.system(size: 14, weight: .medium)).fixedSize()
                 }
             }.foregroundColor(color).frame(maxWidth: .infinity, alignment: .leading)
-            SensorTrend(history: monitor.history, now: now, value: { $0[keyPath: path] }, color: color).frame(height: 30)
+            SensorTrend(history: monitor.history, now: now, value: { $0[keyPath: path] }, color: color, cpuSource: cpuSource).frame(height: 30)
             Text(note).font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }.padding(16).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).lidlightCard()
     }
@@ -117,9 +117,10 @@ private struct SensorTrend: View {
     let now: Date
     let value: (SensorSample) -> Double?
     let color: Color
+    var cpuSource: String? = nil
     var body: some View {
         let samples = history.filter { now.timeIntervalSince($0.date) >= 0 && now.timeIntervalSince($0.date) <= 120 }
-        let maximum = max(samples.compactMap(value).max() ?? 1, 1) * 1.15
+        let maximum = max(samples.filter { cpuSource == nil || $0.cpuKey == cpuSource }.compactMap(value).max() ?? 1, 1) * 1.15
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
@@ -130,7 +131,7 @@ private struct SensorTrend: View {
                 Path { path in
                     var previous: Date?
                     for sample in samples {
-                        guard let reading = value(sample) else { previous = nil; continue }
+                        guard cpuSource == nil || sample.cpuKey == cpuSource, let reading = value(sample) else { previous = nil; continue }
                         let point = CGPoint(x: geometry.size.width * (1 - now.timeIntervalSince(sample.date) / 120), y: geometry.size.height * (1 - reading / maximum))
                         if let previous, sample.date.timeIntervalSince(previous) <= 6 { path.addLine(to: point) }
                         else { path.move(to: point) }
