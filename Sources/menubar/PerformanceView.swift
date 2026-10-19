@@ -7,7 +7,7 @@ struct PerformanceSummary: View {
         let sample = PerformanceMonitor.isFresh(monitor.sample, now: now) ? monitor.sample : nil
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("LIVE PERFORMANCE").tracking(1)
+                Text("LIVE SENSORS").tracking(1)
                 Spacer()
                 Image(systemName: "chevron.right")
             }.font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
@@ -18,7 +18,6 @@ struct PerformanceSummary: View {
                     metric("Fans · max RPM", color: LidlightPalette.mist, path: { $0.fans.compactMap(\.rpm).max() }, value: sample?.fans.compactMap(\.rpm).max().map { String(format: "%.0f", $0) } ?? "—")
                 }
             }
-            Text("Last 2 min · While panel is open").font(.system(size: 8)).foregroundColor(.secondary)
         }.contentShape(Rectangle())
     }
     private func metric(_ title: String, color: Color, path: @escaping (SensorSample) -> Double?, value: String, cpuSource: String? = nil) -> some View {

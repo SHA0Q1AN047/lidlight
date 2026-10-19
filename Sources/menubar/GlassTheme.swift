@@ -20,7 +20,7 @@ extension EnvironmentValues {
     }
 }
 
-/// Controls use native glass; content adds only a thin clear surface to avoid layered blur.
+/// A frosted panel supports readable content; controls retain a subtle glass finish.
 extension View {
     func lidlightGlass(selected: Bool = false, radius: CGFloat = 14) -> some View {
         modifier(GlassControl(selected: selected, radius: radius))
@@ -42,9 +42,9 @@ private struct GlassControl: ViewModifier {
                     .overlay(RoundedRectangle(cornerRadius: radius).fill(LidlightPalette.iris.opacity(selected ? 0.18 : 0.055)))
             }
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(.clear.tint(selected ? LidlightPalette.iris.opacity(0.08) : nil).interactive(), in: RoundedRectangle(cornerRadius: radius))
+            content.glassEffect(.regular.tint(selected ? LidlightPalette.iris.opacity(0.08) : nil).interactive(), in: RoundedRectangle(cornerRadius: radius))
         } else {
-            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius))
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius))
         }
     }
 }
@@ -62,10 +62,10 @@ private struct ContentSurface: ViewModifier {
         } else {
             content.background {
                 RoundedRectangle(cornerRadius: radius)
-                    .fill(LinearGradient(colors: [.white.opacity(0.055), .white.opacity(0.012)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.24))
             }.overlay {
                 RoundedRectangle(cornerRadius: radius).strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.05), .white.opacity(0.16)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.65)
+                    LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.035), .white.opacity(0.09)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.65)
                     .allowsHitTesting(false)
             }
         }
@@ -91,11 +91,15 @@ struct PanelBackdrop: View {
     var body: some View {
         ZStack {
             if reduceTransparency || opaquePreview { Color(nsColor: .windowBackgroundColor) }
-            else { PanelMaterial().opacity(0.38) }
+            else {
+                PanelMaterial()
+                // Keep the blur at full strength; tint it instead of exposing a sharp desktop.
+                Color(nsColor: .windowBackgroundColor).opacity(0.32)
+            }
             LinearGradient(colors: [LidlightPalette.iris.opacity(0.018), LidlightPalette.mist.opacity(0.008), LidlightPalette.peach.opacity(0.012)], startPoint: .topLeading, endPoint: .bottomTrailing)
         }.overlay {
             RoundedRectangle(cornerRadius: 26).strokeBorder(
-                LinearGradient(colors: [.white.opacity(0.52), .white.opacity(0.08), .white.opacity(0.24)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.75)
+                LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.05), .white.opacity(0.14)],startPoint: .topLeading,endPoint: .bottomTrailing),lineWidth: 0.75)
                 .allowsHitTesting(false)
         }
     }

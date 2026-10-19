@@ -23,7 +23,6 @@ struct Dashboard: View {
     let toggleDim: () -> Void
     let copyDiagnostics: () -> Void
     let quit: () -> Void
-    @State private var showingPowerModes = false
     private let mint = LidlightPalette.iris
     var body: some View {
         VStack(spacing: 0) {
@@ -65,72 +64,65 @@ struct Dashboard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.buttonStyle(GlassActionStyle())
             }
-            Button { showingPowerModes = true } label: {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Circle().fill(state.running && state.awake != nil ? (state.awake == true ? mint : Color.gray) : Color.orange).frame(width: 8, height: 8)
-                    Text(!state.running ? "SERVICE OFFLINE" : (state.awake == true ? "AWAKE" : (state.awake == false ? "SLEEP ALLOWED" : "UNKNOWN"))).font(.system(size: 10, weight: .semibold)).tracking(1.5)
-                    Spacer()
-                    Label(state.power, systemImage: "bolt.fill").font(.system(size: 9)).foregroundColor(.secondary)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(!state.running ? "Service offline" : (state.awake == true ? "Keeping Mac awake" : (state.awake == false ? "Sleep allowed" : "Checking status…")))
+                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    Spacer(minLength: 4)
+                    Circle().fill(state.running && state.awake != nil ? (state.awake == true ? mint : Color.secondary) : Color.orange).frame(width: 7, height: 7)
                 }
-
-                Text(features.reason).font(.system(size: 11, weight: .medium)).foregroundColor(mint).fixedSize(horizontal: false, vertical: true)
-                Text(features.supply.falling ? features.supply.summary : features.nextAction).font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Text(features.pendingMode == nil ? "Change power mode" : "Applying mode…")
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                }.font(.system(size: 9)).foregroundColor(.secondary)
-            }.padding(14).frame(maxWidth: .infinity, alignment: .leading).lidlightCard()
-            }.buttonStyle(.plain)
-                .disabled(!state.running || features.pendingMode != nil)
-                .accessibilityLabel("Change power mode")
-                .popover(isPresented: $showingPowerModes, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Power mode").font(.headline)
-                        ForEach(0..<3) { index in
-                            Button {
-                                showingPowerModes = false
-                                select(index)
-                            } label: {
-                                HStack {
-                                    Text(["Automatic · On AC power", "Stay awake · Even on battery", "Allow sleep · Normal behavior"][index])
-                                    Spacer()
-                                    if state.mode == index { Image(systemName: "checkmark") }
-                                }.frame(width: 250).padding(8)
-                            }.buttonStyle(GlassActionStyle())
-                                .disabled(!state.running || features.pendingMode != nil)
-                        }
-                    }.padding(16)
+                Text(state.power).font(.system(size: 11)).foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    homeMode(0, "Automatic", "bolt")
+                    homeMode(1, "Stay awake", "sun.max")
+                    homeMode(2, "Allow sleep", "moon")
                 }
+                Text(features.pendingMode != nil ? "Applying mode…" : features.reason)
+                    .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                if features.supply.falling {
+                    Text(features.supply.summary).font(.system(size: 11)).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }.padding(16).lidlightCard()
             Button { features.page = "performance" } label: {
                 PerformanceSummary(monitor: monitor, now: Date())
                     .padding(16).lidlightCard()
             }.buttonStyle(.plain)
-            if features.sessionText != "No active session" { Text(features.sessionText).font(.system(size: 11)).foregroundColor(.secondary) }
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    nav("Controls", "Power & display", "slider.horizontal.3", "controls")
+            if features.sessionText != "No active session" {
+                Button { features.page = "sessions" } label: {
+                    Label(features.sessionText, systemImage: "timer")
+                        .font(.system(size: 11, weight: .medium)).foregroundColor(mint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(GlassActionStyle())
+            }
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
                     nav("Sessions", "Timers & focus", "timer", "sessions")
+                    nav("Countdown", "Your next event", "calendar", "countdown")
                 }
-                HStack(spacing: 10) {
-                    nav("Rules", "Your automations", "arrow.triangle.branch", "rules")
+                Divider().padding(.vertical, 3)
+                HStack(spacing: 12) {
+                    nav("Rules", "Automations", "arrow.triangle.branch", "rules")
                     nav("Activity", "Recent changes", "clock", "activity")
                 }
             }
-            if let status = verification.status {
+            if let status = verification.status, !status.verified || verification.updateConfirmed {
                 Button { features.page = "updates" } label: {
                     Label(verification.updateConfirmed ? "Update confirmed · " + status.running : status.summary, systemImage: status.verified ? "checkmark.seal" : "exclamationmark.circle")
                         .font(.system(size: 10)).foregroundColor(status.verified ? .secondary : .orange)
                 }.buttonStyle(.plain)
             }
-            if features.conflicts > 0 { Text("Power setting conflicts: \(features.conflicts). See Details.").font(.system(size: 11)).foregroundColor(.orange) }
+            if features.conflicts > 0 { Text("Power setting conflicts: \(features.conflicts). See More → Diagnostics.").font(.system(size: 11)).foregroundColor(.orange) }
             if let message = features.message { Text(message).font(.system(size: 11)).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true) }
             Divider()
             HStack {
-                Button { state.details.toggle() } label: {
-                    Label(state.details ? "Hide details" : "Details", systemImage: "waveform.path.ecg")
-                }.buttonStyle(.plain)
+                Menu {
+                    Button("Power & display") { features.page = "controls" }
+                    Button("Preferences") { features.page = "settings" }
+                    Button("Updates") { features.page = "updates" }
+                    Button("Diagnostics") { state.details = true }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }.menuStyle(.borderlessButton).fixedSize()
                 Spacer()
                 Button("Quit & allow sleep", action: quit).buttonStyle(.plain).foregroundColor(.secondary)
             }.font(.system(size: 11))
@@ -204,16 +196,32 @@ struct Dashboard: View {
     private func nav(_ title: String, _ detail: String, _ symbol: String, _ page: String) -> some View {
         Button { features.page = page } label: {
             HStack(spacing: 10) {
-                Image(systemName: symbol).font(.system(size: 17)).frame(width: 22).foregroundColor(mint)
+                Image(systemName: symbol).font(.system(size: 15)).frame(width: 20).foregroundColor(mint)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 12, weight: .semibold))
                     Text(detail).font(.system(size: 9)).foregroundColor(.secondary)
                 }
                 Spacer(minLength: 0)
             }.frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                .padding(10).lidlightGlass(radius: 16).contentShape(Rectangle())
+                .padding(.vertical, 8).contentShape(Rectangle())
         }.buttonStyle(.plain)
     }
+    private func homeMode(_ index: Int, _ title: String, _ icon: String) -> some View {
+        Button { select(index) } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 15))
+                Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1)
+            }.frame(maxWidth: .infinity).padding(.vertical, 10)
+                .lidlightGlass(selected: state.mode == index, radius: 12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(state.mode == index ? mint.opacity(0.6) : .clear, lineWidth: 1))
+                .foregroundColor(state.mode == index ? mint : .primary)
+        }.buttonStyle(.plain)
+            .disabled(!state.running || features.pendingMode != nil)
+            .accessibilityLabel(title)
+            .accessibilityValue(state.mode == index ? "Selected" : "Not selected")
+            .help(["Stay awake on AC power; allow sleep on battery.", "Stay awake on battery too, subject to battery protection.", "Let macOS sleep normally."][index])
+    }
+
     private func modeButton(_ index: Int, _ title: String, _ detail: String, _ icon: String) -> some View {
         Button { select(index) } label: {
             VStack(alignment: .leading, spacing: 8) {
