@@ -25,6 +25,10 @@ if pgrep -x lidlightd >/dev/null; then
     echo "后台服务仍在运行，停止卸载 / Service is still running; uninstall stopped" >&2
     exit 1
 fi
+# Restore only a charge gate owned by Lidlight, before deleting recovery tools.
+if [ -f /var/db/lidlight-charge.json ]; then
+    /Library/PrivilegedHelperTools/lidlightd --restore-charging
+fi
 # Restore and verify sleep before deleting the recovery tools.
 pmset -a disablesleep 0
 pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
@@ -32,7 +36,7 @@ pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
 rm -f /Library/LaunchAgents/com.lidlight.menubar.plist \
       /Library/LaunchDaemons/com.lidlight.daemon.plist \
       /Library/PrivilegedHelperTools/lidlightd \
-      /var/run/lidlight-runtime.json /var/db/lidlight /var/db/lidlight-options.json \
+      /var/run/lidlight-runtime.json /var/run/lidlight-charge.json /var/db/lidlight-charge.json /var/db/lidlight /var/db/lidlight-options.json \
       /var/log/lidlight.log /var/log/lidlight.log.1
 # 只删我们自己建的那个软链接。
 if [ -L /usr/local/bin/lidlight ] &&

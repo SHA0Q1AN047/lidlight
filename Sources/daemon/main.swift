@@ -10,6 +10,11 @@ import IOKit.pwr_mgt
 import notify
 
 let dryRun = CommandLine.arguments.contains("--dry-run")
+if CommandLine.arguments.contains("--restore-charging") {
+    guard !dryRun, getuid() == 0 else { exit(1) }
+    exit(ChargeController().restore() ? 0 : 1)
+}
+let chargeController: ChargeController? = dryRun ? nil : ChargeController()
 let notifyPrefix = dryRun ? "com.lidlight.dryrun" : "com.lidlight"
 let modeFile = "/var/db/lidlight"
 let optionsFile = "/var/db/lidlight-options.json"
@@ -175,6 +180,7 @@ func holdAssertion(_ on: Bool) {
 }
 
 func sync() {
+    chargeController?.tick()
     if options.oneShot && onACPower() { State.sessionStartedOnAC = true }
     if options.deadline > 0 && Date().timeIntervalSince1970 >= options.deadline ||
        options.oneShot && State.sessionStartedOnAC && !onACPower() {
@@ -274,6 +280,7 @@ func setMode(_ mode: Mode) {
 }
 
 func shutdown(_ name: String) {
+    if chargeController?.restore() == false { log("Could not confirm charging recovery; recovery state retained.") }
     log(L("收到 \(name)，恢复 disablesleep 0 后退出", "Received \(name), restoring disablesleep 0 and exiting"))
     pmset(["-a", "disablesleep", "0"])
     exit(0)
@@ -327,6 +334,14 @@ for mode in Mode.allCases {
     commandTokens.append(token)
 }
 
+var chargeToken: Int32 = 0
+notify_register_dispatch("\(notifyPrefix).option-charge-limit", &chargeToken, .main) { received in
+    var value: UInt64 = 0
+    guard notify_get_state(received, &value) == NOTIFY_STATUS_OK, value <= 2 else { return }
+    chargeController?.command(value)
+}
+commandTokens.append(chargeToken)
+
 // Option payloads contain only bounded numeric values; no commands or file paths.
 for key in ["battery-limit", "ac-only", "startup-auto", "presentation", "deadline", "one-shot"] {
     var token: Int32 = 0
@@ -377,6 +392,30 @@ notify_register_dispatch("com.apple.system.powermanagement.prefschange", &prefsT
             if delay == 2.5 { prefsSyncPending = false }
             sync()
         }
+    }
+}
+
+// A threshold managed by a daemon must hold charging before the daemon sleeps.
+// IOMessage.h macros are not imported into Swift (sys_iokit = 0x38 << 26).
+let chargeWillSleep: UInt32 = 0xe0000280
+let chargeCanSleep: UInt32 = 0xe0000270
+let chargeDidWake: UInt32 = 0xe0000300
+var chargePowerPort: IONotificationPortRef?
+var chargePowerNotifier: io_object_t = 0
+var chargePowerConnection: io_connect_t = 0
+if !dryRun {
+    chargePowerConnection = IORegisterForSystemPower(nil, &chargePowerPort, { _, _, message, argument in
+        if message == chargeWillSleep {
+            chargeController?.prepareSleep()
+            IOAllowPowerChange(chargePowerConnection, Int(bitPattern: argument))
+        } else if message == chargeCanSleep {
+            IOAllowPowerChange(chargePowerConnection, Int(bitPattern: argument))
+        } else if message == chargeDidWake {
+            chargeController?.tick(force: true)
+        }
+    }, &chargePowerNotifier)
+    if let port = chargePowerPort, let source = IONotificationPortGetRunLoopSource(port)?.takeUnretainedValue() {
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
     }
 }
 

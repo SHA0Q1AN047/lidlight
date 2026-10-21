@@ -48,6 +48,8 @@ swiftc Sources/menubar/Features.swift Sources/menubar/PowerSupply.swift Sources/
 "$RELEASE_TEMP/feature-tests"
 swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sources/menubar/Features.swift Sources/menubar/PowerSupply.swift Sources/menubar/DayCountdown.swift Sources/Shared/PowerPolicy.swift Sources/menubar/ProcessCPU.swift Sources/menubar/PerformanceMonitor.swift Sources/menubar/HardwareSensors.swift Tests/AuditRegressionTests.swift -o "$RELEASE_TEMP/audit-tests"
 "$RELEASE_TEMP/audit-tests"
+swiftc Sources/Shared/ChargeLimit.swift Sources/daemon/ChargeController.swift Tests/ChargeLimitTests.swift -o "$RELEASE_TEMP/charge-tests"
+"$RELEASE_TEMP/charge-tests"
 bash scripts/build.sh
 python3 Tests/DaemonFeatureTests.py
 python3 Tests/UninstallTests.py

@@ -49,6 +49,7 @@ compile Sources/daemon "$DAEMON"
 compile Sources/menubar "$APP/Contents/MacOS/Lidlight"
 
 sed "s/@VERSION@/$VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+cp Resources/ThirdPartyNotices.txt "$APP/Contents/Resources/"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 install -m 755 scripts/uninstall.sh Resources/lidlight "$APP/Contents/Resources/"
 install -m 644 Resources/com.lidlight.daemon.plist "$ROOT/Library/LaunchDaemons/"
