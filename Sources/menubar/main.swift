@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }, context)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick() }; if !self.displaysSleeping { self.quota.refresh(); Task { @MainActor in self.updater.check() } }; self.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in guard let self else { return }; if !self.userRequestedQuit { self.features.tick(); MagSafeModel.shared.tick() }; if !self.displaysSleeping { self.quota.refresh(); Task { @MainActor in self.updater.check() } }; self.refresh() }
         lidTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.monitor.refresh(visible: self?.popover.isShown == true && self?.displaysSleeping == false && self?.dashboard.details == false && ["home", "performance"].contains(self?.features.page ?? ""), includeProcesses: self?.features.page == "performance")
             if let self {
@@ -221,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { menuCat.pause(); lidScreen.restore() }
+    func applicationWillTerminate(_ notification: Notification) { MagSafeModel.shared.stop(); menuCat.pause(); lidScreen.restore() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard userRequestedQuit,

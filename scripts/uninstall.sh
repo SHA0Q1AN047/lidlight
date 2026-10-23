@@ -29,6 +29,9 @@ fi
 if [ -f /var/db/lidlight-charge.json ]; then
     /Library/PrivilegedHelperTools/lidlightd --restore-charging
 fi
+if [ -f /var/db/lidlight-magsafe-owned ]; then
+    /Library/PrivilegedHelperTools/lidlightd --restore-led
+fi
 # Restore and verify sleep before deleting the recovery tools.
 pmset -a disablesleep 0
 pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
@@ -36,7 +39,7 @@ pmset -g | grep -q 'SleepDisabled[[:space:]]*0'
 rm -f /Library/LaunchAgents/com.lidlight.menubar.plist \
       /Library/LaunchDaemons/com.lidlight.daemon.plist \
       /Library/PrivilegedHelperTools/lidlightd \
-      /var/run/lidlight-runtime.json /var/run/lidlight-charge.json /var/db/lidlight-charge.json /var/db/lidlight /var/db/lidlight-options.json \
+      /var/run/lidlight-magsafe.json /var/db/lidlight-magsafe-owned /var/run/lidlight-runtime.json /var/run/lidlight-charge.json /var/db/lidlight-charge.json /var/db/lidlight /var/db/lidlight-options.json \
       /var/log/lidlight.log /var/log/lidlight.log.1
 # 只删我们自己建的那个软链接。
 if [ -L /usr/local/bin/lidlight ] &&

@@ -10,10 +10,15 @@ import IOKit.pwr_mgt
 import notify
 
 let dryRun = CommandLine.arguments.contains("--dry-run")
+if CommandLine.arguments.contains("--restore-led") {
+    guard !dryRun, getuid() == 0 else { exit(1) }
+    exit(MagSafeController().restore() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--restore-charging") {
     guard !dryRun, getuid() == 0 else { exit(1) }
     exit(ChargeController().restore() ? 0 : 1)
 }
+let magSafeController: MagSafeController? = dryRun ? nil : MagSafeController()
 let chargeController: ChargeController? = dryRun ? nil : ChargeController()
 let notifyPrefix = dryRun ? "com.lidlight.dryrun" : "com.lidlight"
 let modeFile = "/var/db/lidlight"
@@ -280,6 +285,7 @@ func setMode(_ mode: Mode) {
 }
 
 func shutdown(_ name: String) {
+    _ = magSafeController?.restore()
     if chargeController?.restore() == false { log("Could not confirm charging recovery; recovery state retained.") }
     log(L("收到 \(name)，恢复 disablesleep 0 后退出", "Received \(name), restoring disablesleep 0 and exiting"))
     pmset(["-a", "disablesleep", "0"])
@@ -333,6 +339,17 @@ for mode in Mode.allCases {
     }
     commandTokens.append(token)
 }
+
+var ledToken: Int32 = 0
+notify_register_dispatch("\(notifyPrefix).option-magsafe", &ledToken, .main) { received in
+    var value: UInt64 = 0
+    if notify_get_state(received, &value) == NOTIFY_STATUS_OK, value <= 3 { magSafeController?.command(value) }
+}
+commandTokens.append(ledToken)
+let ledTimer = DispatchSource.makeTimerSource(queue: .main)
+ledTimer.schedule(deadline: .now(), repeating: 1)
+ledTimer.setEventHandler { magSafeController?.tick() }
+ledTimer.resume()
 
 var chargeToken: Int32 = 0
 notify_register_dispatch("\(notifyPrefix).option-charge-limit", &chargeToken, .main) { received in
@@ -406,6 +423,7 @@ var chargePowerConnection: io_connect_t = 0
 if !dryRun {
     chargePowerConnection = IORegisterForSystemPower(nil, &chargePowerPort, { _, _, message, argument in
         if message == chargeWillSleep {
+            magSafeController?.command(0)
             chargeController?.prepareSleep()
             IOAllowPowerChange(chargePowerConnection, Int(bitPattern: argument))
         } else if message == chargeCanSleep {

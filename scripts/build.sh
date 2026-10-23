@@ -72,7 +72,18 @@ echo "==> 打包"
 codesign --verify --deep --strict "$ROOT/Applications/Lidlight.app"
 # 不关掉 relocatable 的话，安装器会把应用装到它在磁盘上找到的同名副本那里。
 pkgbuild --analyze --root "$ROOT" "$BUILD/component.plist" >/dev/null
-/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$BUILD/component.plist"
+python3 - "$BUILD/component.plist" <<'PYCOMPONENT'
+import plistlib, sys
+path = sys.argv[1]
+with open(path, 'rb') as f:
+    components = plistlib.load(f)
+if not components:
+    raise SystemExit("No application component found")
+for component in components:
+    component['BundleIsRelocatable'] = False
+with open(path, 'wb') as f:
+    plistlib.dump(components, f)
+PYCOMPONENT
 pkgbuild --root "$ROOT" \
     --component-plist "$BUILD/component.plist" \
     --scripts Installer/scripts \

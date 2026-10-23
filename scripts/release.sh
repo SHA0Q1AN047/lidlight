@@ -50,6 +50,10 @@ swiftc Sources/menubar/CodexQuota.swift Sources/menubar/QuotaHistory.swift Sourc
 "$RELEASE_TEMP/audit-tests"
 swiftc Sources/Shared/ChargeLimit.swift Sources/daemon/ChargeController.swift Tests/ChargeLimitTests.swift -o "$RELEASE_TEMP/charge-tests"
 "$RELEASE_TEMP/charge-tests"
+swiftc Sources/Shared/MagSafe.swift Sources/daemon/MagSafeController.swift Tests/MagSafeTests.swift -o "$RELEASE_TEMP/magsafe-tests"
+"$RELEASE_TEMP/magsafe-tests"
+swiftc Sources/menubar/CodexActivity.swift Tests/CodexActivityTests.swift -o "$RELEASE_TEMP/activity-tests"
+"$RELEASE_TEMP/activity-tests"
 bash scripts/build.sh
 python3 Tests/DaemonFeatureTests.py
 python3 Tests/UninstallTests.py

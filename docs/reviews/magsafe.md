@@ -1,0 +1,11 @@
+# MagSafe Codex activity light
+
+Opt-in controls in the dashboard: Codex running blinks amber/off at one second per phase, idle is green. Off now and scheduled night mode override activity. Default schedule 23:00–07:00 local time; equal endpoints disable the interval. All switches default off.
+
+Independent implementation using the documented ACLC protocol values (0 system, 1 off, 3 green, 4 amber), described at https://github.com/kamenlevi/MagHue#how-it-works . No MagHue source copied. Compatible Apple Silicon MagSafe 3 only; probe metadata/read-back rather than assuming all models work. USB-C charging has no visible MagSafe LED. Charge keys are untouched.
+
+Local Codex sessions only: tail JSONL task_started/task_complete/turn_aborted events, aggregate concurrent files, poll every five seconds on a utility queue. Missing/unreadable/truncated/overlarge evidence or stale active tasks are unknown and release the LED rather than showing false idle. Discovers recently modified logs across all date folders every 30 seconds, including resumed old threads; remote/cloud tasks without local logs are not observed. Task logs are an internal Codex format and may change. No prompts, tokens, or credentials are transmitted.
+
+Root daemon accepts only 0–3 mode requests, journals ownership before writing ACLC, verifies values, avoids taking over external overrides, restores on shutdown/sleep/uninstall, and releases control after a 15-second heartbeat lease. App must remain running. Sleep hands control back to macOS, so night darkness is not guaranteed while the computer sleeps. Night mode persists through closed-lid operation while Lidlight keeps the Mac awake. On restoration failure reconnect the cable/restart the Mac; recovery journal remains.
+
+Validation: MagSafeTests covers schedule boundaries, unknown activity, amber/off blinking, green/off, external ownership and restart recovery. CodexActivityTests covers start, completion, simultaneous sessions and cancellation. Universal app/daemon build. Actual LED behavior requires a connected supported MagSafe cable and physical observation; read-back alone is not optical verification. This change is not published or installed automatically.

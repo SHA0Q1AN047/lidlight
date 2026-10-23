@@ -166,3 +166,9 @@ Lidlight is the author's original macOS utility.
 ### Clear glass panel
 
 The dashboard uses a transparent anchored panel, one lightly frosted desktop material and near-clear content surfaces with fine reflective edges. Content cards avoid stacking blur and large white fills. Native Liquid Glass controls remain available on macOS 26; macOS 12–15 retain standard material controls. The panel closes on outside click, Escape, application switches or display changes. It supports keyboard entry and clamps its position to the active screen. Reduce Transparency keeps an opaque, readable appearance without changing system preferences.
+
+### MagSafe Codex light (1.9.9)
+
+In **Power controls → MagSafe status light**, enable local Codex activity: amber/off blinking while a task runs, green when idle. Night lights off defaults to 23:00–07:00 and supports custom local times; **Turn light off now** overrides activity. All options start disabled. Compatible Apple Silicon MagSafe 3 hardware is required. These colors replace the normal charging indication without changing charge limits.
+
+Keep Lidlight running. Unknown/stale activity returns the LED to macOS. Remote tasks without local session logs are not detected. Sleep restores system LED control, so darkness while asleep is not guaranteed. See [implementation and validation notes](docs/reviews/magsafe.md).

@@ -158,6 +158,7 @@ struct Dashboard: View {
                 Text("Warns after a drop of 2+ battery points across 3–5 minutes on AC. Charging limits or a full battery alone do not trigger it. This is a supply warning, not a wattage measurement.").font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             }.padding(14).lidlightCard()
             ChargeLimitView()
+            MagSafeView()
             Toggle(isOn: Binding(get: { state.dim }, set: { _ in toggleDim() })) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Dim on lid close").font(.system(size: 12, weight: .medium))
