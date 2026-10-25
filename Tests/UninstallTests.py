@@ -8,8 +8,11 @@ script = Path('scripts/uninstall.sh').read_text()
 # Redirect the exact charge recovery executable to a stub; never run installed helpers.
 script = script.replace('/Library/PrivilegedHelperTools/lidlightd --restore-charging', 'restore_charge')
 script = script.replace('[ -f /var/db/lidlight-charge.json ]', '[ "${HAS_CHARGE_STATE:-0}" = 1 ]')
+script = script.replace('/Library/PrivilegedHelperTools/lidlightd --restore-led', 'restore_led')
+script = script.replace('[ -f /var/db/lidlight-magsafe-owned ]', '[ "${HAS_LED_STATE:-0}" = 1 ]')
 preamble = '''
 id() { echo 0; }
+restore_led() { return "${LED_RESTORE_STATUS:-0}"; }
 restore_charge() { return "${CHARGE_RESTORE_STATUS:-0}"; }
 stat() { echo 501; }
 launchctl() { if [ "$1" = print ]; then return 0; fi; return "${STOP_STATUS:-0}"; }
@@ -29,7 +32,9 @@ with tempfile.TemporaryDirectory() as directory:
                             ({'RESTORE_STATUS': '1'}, False),
                             ({'SLEEP_STATE': '1'}, False),
                             ({'HAS_CHARGE_STATE': '1'}, True),
-                            ({'HAS_CHARGE_STATE': '1', 'CHARGE_RESTORE_STATUS': '1'}, False)]:
+                            ({'HAS_CHARGE_STATE': '1', 'CHARGE_RESTORE_STATUS': '1'}, False),
+                            ({'HAS_LED_STATE': '1'}, True),
+                            ({'HAS_LED_STATE': '1', 'LED_RESTORE_STATUS': '1'}, False)]:
         log.write_text('')
         result = subprocess.run(['bash'], input=preamble + script, text=True,
                                 capture_output=True, env=dict(os.environ, TEST_LOG=str(log), **values))
