@@ -9,9 +9,16 @@ final class CodexActivityReader {
     private var discovered = Set<URL>()
     private var lastDiscovery = Date.distantPast
     init(root: URL? = nil) { rootOverride = root }
-    func running(now: Date = Date()) -> Bool? {
-        let root = rootOverride ?? ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+    static var root: URL {
+        ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+    }
+    func changed(_ urls: [URL], rescan: Bool) {
+        if rescan { lastDiscovery = .distantPast }
+        for url in urls.prefix(257) { discovered.insert(url) }
+    }
+    func running(now: Date = Date()) -> Bool? {
+        let root = (rootOverride ?? Self.root).resolvingSymlinksInPath()
         let sessions = root.appendingPathComponent("sessions")
         guard FileManager.default.isReadableFile(atPath: sessions.path) else { return nil }
         // Resumed threads keep their original date directory. Discover by modification time,
@@ -25,6 +32,24 @@ final class CodexActivityReader {
                 if recent.count > 256 { return nil }
             }
             discovered = recent; lastDiscovery = now
+        }
+        // New threads live in today's directory. Check only these shallow folders
+        // between full scans, covering both UTC and local date boundaries.
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.dateFormat = "yyyy/MM/dd"
+        var days = Set<String>()
+        for zone in [TimeZone.current, TimeZone(secondsFromGMT: 0)!] {
+            dayFormatter.timeZone = zone
+            for date in [now, now.addingTimeInterval(-86400)] { days.insert(dayFormatter.string(from: date)) }
+        }
+        for day in days {
+            let folder = sessions.appendingPathComponent(day)
+            let entries = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
+            for url in entries where url.pathExtension == "jsonl" {
+                if (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true { discovered.insert(url) }
+                if discovered.count > 256 { return nil }
+            }
         }
         var files = Set(cursors.keys)
         files.formUnion(discovered)

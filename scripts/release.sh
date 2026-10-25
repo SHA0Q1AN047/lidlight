@@ -54,6 +54,8 @@ swiftc Sources/Shared/MagSafe.swift Sources/daemon/MagSafeController.swift Tests
 "$RELEASE_TEMP/magsafe-tests"
 swiftc Sources/menubar/CodexActivity.swift Tests/CodexActivityTests.swift -o "$RELEASE_TEMP/activity-tests"
 "$RELEASE_TEMP/activity-tests"
+swiftc Sources/menubar/CodexActivityWatcher.swift Tests/CodexActivityWatcherTests.swift -o "$RELEASE_TEMP/activity-watcher-tests"
+"$RELEASE_TEMP/activity-watcher-tests"
 bash scripts/build.sh
 python3 Tests/DaemonFeatureTests.py
 python3 Tests/UninstallTests.py

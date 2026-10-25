@@ -20,6 +20,21 @@ import Foundation
   let file2=folder.appendingPathComponent("b.jsonl")
   try event("task_started").write(to:file2); assert(reader.running(now: Date().addingTimeInterval(31)) == true)
   let h2 = try FileHandle(forWritingTo:file2); try h2.seekToEnd(); try h2.write(contentsOf:event("turn_aborted")); try h2.close(); assert(reader.running() == false)
+  let resumed = folder.appendingPathComponent("resumed.jsonl")
+  try event("task_started").write(to: resumed)
+  reader.changed([resumed], rescan: false)
+  assert(reader.running() == true) // old date folder discovered by event
+  let resumedHandle = try FileHandle(forWritingTo: resumed)
+  try resumedHandle.seekToEnd(); try resumedHandle.write(contentsOf: event("task_complete")); try resumedHandle.close()
+  assert(reader.running() == false)
+  let today = root.appendingPathComponent("sessions/" + f.string(from: Date()))
+  try FileManager.default.createDirectory(at: today, withIntermediateDirectories: true)
+  let newThread = today.appendingPathComponent("new.jsonl")
+  try event("task_started").write(to: newThread)
+  assert(reader.running() == true) // no 30-second discovery wait
+  let latest = try FileHandle(forWritingTo: newThread)
+  try latest.seekToEnd(); try latest.write(contentsOf: event("task_complete")); try latest.close()
+  assert(reader.running() == false)
   print("Codex start, complete, concurrent sessions and abort passed")
  }
 }
